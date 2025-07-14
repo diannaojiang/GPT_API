@@ -3,28 +3,22 @@
 # main.py
 
 # 标准库导入
-import re
-import traceback
 import time
 import random
 import string
 import sys
 import os
 import uvicorn
-import json
 
 # 第三方库导入
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from openai import APIError
 
 # 本地应用导入
 from utils.log import logger
-from utils.db_handler import log_request
-from utils.client_handler import find_matching_client
-from utils.request_handler import process_messages
+from utils.api_handler import handle_api_request
 from config import load_clients, init_openai_clients
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -90,213 +84,15 @@ async def list_models():
 @app.post("/v1/completions")
 async def legacy_completions(post_data: dict, request: Request):
     """处理旧版 /v1/completions (文本补全) 接口请求"""
-    try:
-        model = post_data.get("model")
-        try:
-            client, cfg = find_matching_client(model, client_configs, clients)
-        except ValueError as e:
-            return JSONResponse(status_code=404, content={"object": "error", "message": str(e), "type": "NotFoundError"})
-
-        allowed_keys = {
-            "model", "prompt", "best_of", "echo", "frequency_penalty", "logit_bias", "logprobs",
-            "max_tokens", "n", "presence_penalty", "seed", "stop", "stream", "stream_options",
-            "suffix", "temperature", "top_p", "user"
-        }
-        api_post_data = {key: value for key, value in post_data.items() if key in allowed_keys}
-
-        if cfg.stop:
-            if "stop" in api_post_data and api_post_data["stop"]:
-                existing_stop = api_post_data["stop"]
-                if not isinstance(existing_stop, list): existing_stop = [existing_stop]
-                cfg_stop = cfg.stop if isinstance(cfg.stop, list) else [cfg.stop]
-                api_post_data["stop"] = list(set(existing_stop + cfg_stop))
-            else:
-                api_post_data["stop"] = cfg.stop
-
-        try:
-            response = client.completions.create(**api_post_data)
-        except APIError as e:
-            if cfg.fallback:
-                logger.warning(f"Initial request failed: {e}, retrying with fallback model {cfg.fallback}...")
-                model = cfg.fallback
-                del client, cfg
-                client, cfg = find_matching_client(model, client_configs, clients)
-                fallback_post_data = api_post_data.copy()
-                fallback_post_data["model"] = model
-                response = client.completions.create(**fallback_post_data)
-            else:
-                raise e
-
-        client_ip = request.client.host
-        auth_header = request.headers.get("Authorization")
-        request_payload_for_log = {"prompt": api_post_data.get("prompt")}
-
-        if api_post_data.get("stream", False):
-            async def stream_response():
-                full_text_parts = []
-                chunk_buffer = []
-                try:
-                    for chunk in response:
-                        chunk_buffer.append(chunk)
-                        if chunk.choices and chunk.choices[0].text:
-                            full_text_parts.append(chunk.choices[0].text)
-                        yield f"data: {json.dumps(chunk.to_dict())}\n\n"
-
-                    if chunk_buffer:
-                        final_chunk_for_log = chunk_buffer[-1]
-                        final_chunk_for_log.choices[0].text = "".join(full_text_parts)
-                        log_request(client_ip, model, request_payload_for_log, final_chunk_for_log, auth_header,
-                                    request_type=final_chunk_for_log.object)
-
-                    yield "data: [DONE]\n\n"
-                except Exception as e:
-                    logger.error(traceback.format_exc())
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            return StreamingResponse(stream_response(), media_type="text/event-stream")
-        else:
-            log_request(client_ip, model, request_payload_for_log, response, auth_header, request_type=response.object)
-            return response
-
-    except APIError as e:
-        return JSONResponse(status_code=e.status_code, content=e.body)
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"object": "error", "message": str(e), "type": "InternalError"})
-
+    return await handle_api_request(request, post_data, clients, client_configs, "completions")
 
 @app.post("/chat/completions")
 @app.post("/v1/chat/completions")
 async def completions(post_data: dict, request: Request):
     """处理新版 /v1/chat/completions (聊天) 接口请求"""
-    try:
-        model = post_data.get("model")
-        try:
-            client, cfg = find_matching_client(model, client_configs, clients)
-        except ValueError as e:
-            model_name = str(e).split("model ")[-1].strip()
-            return JSONResponse(status_code=404, content={"object": "error", "message": f"The model `{model_name}` does not exist.", "type": "NotFoundError"})
-
-        if cfg.max_tokens:
-            post_data["max_tokens"] = min(post_data.get("max_tokens", cfg.max_tokens), cfg.max_tokens)
-
-        is_multimodal = False
-        if "messages" in post_data:
-            messages = post_data["messages"]
-            messages_fix = []
-            for message in messages:
-                content = message.get("content")
-                if content is None:
-                    if "tool_calls" in message:
-                        pass
-                    else:
-                        raise ValueError("未找到 'content'")
-                else:
-                    if isinstance(content, str):
-                        if len(content) == 0:
-                            continue
-                        if message.get("role") == "assistant":
-                            message["content"] = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-                    elif isinstance(content, list):
-                        # 检查是否存在非文本类型的content block
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") != "text":
-                                is_multimodal = True
-                                break
-                messages_fix.append(message)
-                if is_multimodal:
-                    break  # 如果已确认是多模态，无需再检查
-            post_data["messages"] = process_messages(messages_fix)
-
-        allowed_keys = {
-            "model", "messages", "max_tokens", "stream", "temperature", "top_p",
-            "presence_penalty", "frequency_penalty", "stop", "tool_choice", "tools",
-            "audio", "function_call", "functions", "logit_bias", "logprobs",
-            "max_completion_tokens", "metadata", "modalities", "n",
-            "parallel_tool_calls", "prediction", "reasoning_effort",
-            "response_format", "seed", "service_tier", "store", "stream_options",
-            "top_logprobs", "user", "web_search_options"
-        }
-        api_post_data = {key: value for key, value in post_data.items() if key in allowed_keys}
-
-        tools_used = "tools" in api_post_data and api_post_data["tools"] is not None
-
-        if cfg.stop:
-            if "stop" in api_post_data and api_post_data["stop"]:
-                existing_stop = api_post_data["stop"]
-                if not isinstance(existing_stop, list): existing_stop = [existing_stop]
-                cfg_stop = cfg.stop if isinstance(cfg.stop, list) else [cfg.stop]
-                api_post_data["stop"] = list(set(existing_stop + cfg_stop))
-            else:
-                api_post_data["stop"] = cfg.stop
-
-        try:
-            response = client.chat.completions.create(**api_post_data)
-        except APIError as e:
-            if cfg.fallback:
-                logger.warning(f"Initial request failed: {e}, retrying with fallback model {cfg.fallback}...")
-                model = cfg.fallback
-                del client, cfg
-                client, cfg = find_matching_client(model, client_configs, clients)
-                fallback_post_data = api_post_data.copy()
-                fallback_post_data["model"] = model
-                response = client.chat.completions.create(**fallback_post_data)
-            else:
-                raise e
-
-        client_ip = request.client.host
-        auth_header = request.headers.get("Authorization")
-        request_payload_for_log = {"messages": api_post_data.get("messages", [])}
-
-        if api_post_data.get("stream", False):
-            async def stream_response():
-                content = ""
-                chunk_buffer = []
-                first_token = True
-                try:
-                    for chunk in response:
-                        chunk_buffer.append(chunk)
-                        if not chunk.choices or len(chunk.choices) == 0:
-                            yield f"data: {json.dumps(chunk.to_dict())}\n\n"
-                            continue
-                        delta_content = chunk.choices[0].delta.content
-                        if delta_content:
-                            if first_token and cfg.special_prefix:
-                                chunk.choices[0].delta.content = f"{cfg.special_prefix}\n{delta_content}"
-                                content += delta_content
-                                first_token = False
-                            else:
-                                content += delta_content
-                        yield f"data: {json.dumps(chunk.to_dict())}\n\n"
-
-                    if chunk_buffer:
-                        final_chunk = chunk_buffer[-1]
-                        if not final_chunk.choices or len(final_chunk.choices) == 0:
-                            if len(chunk_buffer) > 1: final_chunk.choices = chunk_buffer[-2].choices
-                            else:
-                                class MockChoice: message = {}
-                                final_chunk.choices = [MockChoice()]
-                        final_chunk.choices[0].message = {"content": content, "role": chunk_buffer[0].choices[0].delta.role or "assistant"}
-                        log_request(client_ip, model, request_payload_for_log, final_chunk, auth_header,
-                                    request_type=final_chunk.object, tools_used=tools_used, is_multimodal=is_multimodal)
-
-                    yield "data: [DONE]\n\n"
-                except Exception as e:
-                    logger.error(traceback.format_exc())
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            return StreamingResponse(stream_response(), media_type="text/event-stream")
-        else:
-            response_data = response
-            if response_data and len(response_data.choices) > 0 and cfg.special_prefix:
-                response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
-            log_request(client_ip, model, request_payload_for_log, response_data, auth_header,
-                        request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
-            return response_data
-
-    except APIError as e:
-        return JSONResponse(status_code=e.status_code, content=e.body)
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"object": "error", "message": str(e), "type": "InternalError"})
+    return await handle_api_request(request, post_data, clients, client_configs, "chat.completions")
 
 if __name__ == '__main__':
     uvicorn.run(app, host="0.0.0.0", port=7000, log_config=None)
+
+

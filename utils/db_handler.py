@@ -98,7 +98,7 @@ class DatabaseManager:
             return Session(self.engine)
 
 # 全局实例化管理器
-rec_path = os.getenv("RECD_PATH", "../record.db")
+rec_path = os.getenv("RECD_PATH", "record.db")
 db_manager = DatabaseManager(rec_path)
 
 @contextmanager
