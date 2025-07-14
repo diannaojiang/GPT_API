@@ -4,5 +4,5 @@ venv
 *.pid
 config/*
 logs/*
-.tar
-.gz
+*.tar
+*.gz
