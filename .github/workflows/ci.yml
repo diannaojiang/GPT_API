@@ -90,5 +90,6 @@ jobs:
           # 3. 版本号为 b + commit 序号
           tags: |
             ghcr.io/${{ env.OWNER_LC }}/openai-api:b${{ env.COUNT }}
+            ghcr.io/${{ env.OWNER_LC }}/openai-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
