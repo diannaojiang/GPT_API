@@ -1,6 +1,6 @@
 # .github/workflows/release.yml
 
-name: Release
+name: Create Release and Update README
 
 on:
   push:
@@ -9,34 +9,56 @@ on:
 
 jobs:
   release:
+    # 关键：如果 commit 信息包含 [skip ci]，则不运行此任务，防止死循环
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 必须有写入权限来创建 Release
+      contents: write # 必须有写入权限才能提交文件和创建 Release
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0 # 必须获取所有历史记录才能正确计数
 
-      # 新的逻辑：获取 commit 总数来生成版本号
       - name: Get version from commit count
         id: version
         run: |
           commit_count=$(git rev-list --count HEAD)
           echo "tag=b${commit_count}" >> $GITHUB_OUTPUT
 
-      - name: Get latest commit message
-        id: commit
-        run: echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+      - name: Set owner to lowercase
+        id: lower_owner
+        run: echo "OWNER_LC=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      # --- 新增步骤：更新 README.md ---
+      - name: Update README.md with new version
+        run: |
+          # 使用 sed 命令查找并替换镜像版本号
+          # 这个命令会查找 ghcr.io/your-user/openai-api: 这一行，并把冒号后面的所有内容替换为新的版本号
+          sed -i "s|\(ghcr.io/${{ env.OWNER_LC }}/openai-api:\).*|\1${{ steps.version.outputs.tag }}|g" README.md
+
+      # --- 新增步骤：提交并推送 README.md 的改动 ---
+      - name: Commit and push README.md
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          # 检查是否有文件改动，只有在 README.md 被修改时才执行提交
+          if ! git diff --staged --quiet; then
+            git commit -m "docs: Update README to version ${{ steps.version.outputs.tag }} [skip ci]"
+            git push
+          else
+            echo "No changes to README.md to commit."
+          fi
 
       - name: Create Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # 使用上面步骤生成的 tag
           tag_name: ${{ steps.version.outputs.tag }}
           release_name: Release ${{ steps.version.outputs.tag }}
-          body: ${{ steps.commit.outputs.message }}
+          # 使用触发本次工作流的原始 commit 信息作为 Release 的介绍
+          body: ${{ github.event.head_commit.message }}
           draft: false
           prerelease: false
