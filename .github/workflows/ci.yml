@@ -1,0 +1,100 @@
+# .github/workflows/ci.yml
+# 此工作流用于自动化代码检查、构建 Docker 镜像并将其发布到 GitHub Packages
+
+name: CI/CD - Build and Push Docker Image
+
+# 触发条件：
+# 1. 当有代码 push 到 main 分支时
+# 2. 当有 pull request 提交到 main 分支时 (仅运行 lint 检查)
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # --- 任务1: 代码规范检查 (Lint) ---
+  lint:
+    name:  Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          if [ -f openai_api/requirements.txt ]; then pip install -r openai_api/requirements.txt; fi
+
+      - name: Lint with flake8
+        run: |
+          # 检查 Python 语法错误或未定义的名称，如果存在则构建失败
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # 检查其他规范问题，但仅作为警告，不中断构建
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  # --- 任务2: 构建并推送 Docker 镜像 ---
+  build-and-push-docker:
+    name: Build and Push Docker Image
+    # 仅在 lint 任务成功后，并且事件是 push 到 main 分支时运行
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: lint
+    runs-on: ubuntu-latest
+
+    # 授予 job 写入 packages 的权限
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 步骤 1: 检出代码
+      # fetch-depth: 0 用于获取所有历史提交，以便我们能计算总提交数
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 步骤 2: 计算提交次数
+      # 使用 git rev-list 命令获取 HEAD 的总提交数，并将其存入环境变量
+      - name: Get Commit Count
+        id: commit_count
+        run: echo "COUNT=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+
+      # 步骤 3: 登录到 GitHub Container Registry (GHCR)
+      # 使用 GITHUB_TOKEN 进行身份验证，无需额外配置 secret
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤 4: 设置 Docker Buildx
+      # Buildx 是一个 Docker CLI 插件，用于扩展构建功能
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 步骤 5: 构建镜像并推送到 GHCR
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # 设置镜像的标签 (tags)
+          # 1. ghcr.io/OWNER/REPO:COMMIT_COUNT (例如: ghcr.io/my-user/my-repo:15)
+          # 2. ghcr.io/OWNER/REPO:latest (始终指向最新版本)
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ env.COUNT }}
+            ghcr.io/${{ github.repository }}:latest
+          # 启用 GitHub Actions 的构建缓存，以加速后续构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
