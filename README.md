@@ -1,6 +1,6 @@
 # OpenAI API Gateway (GPT_API)
 
-[![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/diannaojiang/GPT_API)](https://github.com/diannaojiang/GPT_API/releases) [![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml)
 
 一个功能强大、高可配置性的 OpenAI API 代理网关。它允许您统一管理和分发来自不同渠道、不同模型的 API 请求，并提供了丰富的功能，如负载均衡、故障转移、日志记录和多模态支持。
 
@@ -22,7 +22,41 @@
 - **容器化部署**: 提供优化的 `Dockerfile` 和部署说明，方便快速上線。
 - **CI/CD 集成**: 提供开箱即用的 GitHub Actions 工作流，实现自动化测试、构建和部署。
 
-## 🚀 快速开始
+## 🚀 快速使用预构建镜像 (推荐)
+
+如果您不想从源代码构建，可以直接从 GitHub Packages 拉取并运行我们已经为您构建好的多架构 Docker 镜像。
+
+### 1. 准备本地目录和配置文件
+即使是直接运行容器，您也需要一个本地的配置文件来定义您的 API 后端。
+
+```bash
+# 1. 在当前目录下创建所需文件夹
+mkdir -p ./config ./logs ./database
+
+# 2. 在 ./config 文件夹内创建一个空的配置文件
+touch ./config/config.yaml
+```
+然后，编辑 config.yaml 文件，将下方的配置示例粘贴进去，并修改为您自己的 API Keys。
+
+### 2. 拉取并运行 Docker 镜像
+执行以下命令，Docker 会自动拉取最新的 openai-api 镜像并启动容器。
+```bash
+docker run -d \
+  --name openai-api \
+  -p 8000:8000 \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/logs:/app/logs \
+  --restart always \
+  ghcr.io/diannaojiang/openai-api:latest
+```
+说明:
+
+`--restart always`*`参数可以确保容器在服务器重启后自动运行。
+
+`ghcr.io/diannaojiang/openai-api` 是镜像的固定地址，latest 标签始终指向 main 分支的最新版本。
+
+
+## 🛠️ 从源代码构建 (高级用户)
 
 ### 1. 环境准备
 
@@ -33,7 +67,7 @@
 
 **a. 克隆仓库**
 ```bash
-git clone [https://github.com/diannaojiang/GPT_API.git](https://github.com/diannaojiang/GPT_API.git)
+git clone https://github.com/diannaojiang/GPT_API.git
 cd GPT_API
 ```
 
@@ -44,9 +78,9 @@ pip install -r requirements.txt
 
 **c. 创建配置文件**
 
-在 `openai_api/config/` 目录下创建一个 `config.yaml` 文件。这是项目的核心配置，用于定义您的后端 API 服务。
+在 `GPT_API/config/` 目录下创建一个 `config.yaml` 文件。这是项目的核心配置，用于定义您的后端 API 服务。
 
-`openai_api/config/config.yaml`:
+`GPT_API/config/config.yaml`:
 ```yaml
 openai_clients:
   # --- 第一个后端服务：官方 OpenAI ---
@@ -71,9 +105,9 @@ openai_clients:
     priority: 2
     model_match:
       type: "exact"
-      value: ["deepseek-chat", "deepseek-coder"]
+      value: ["deepseek-chat", "deepseek-reasoner"]
     # 为此后端的所有响应添加特殊前缀
-    special_prefix: "[DeepSeek]"
+    special_prefix: "<think>"
     # 为此后端添加预设的停止词
     stop: ["<|endoftext|>"]
 
@@ -91,20 +125,20 @@ openai_clients:
 **d. 启动服务**
 ```bash
 # 直接通过 uvicorn 启动
-uvicorn openai_api.main:app --host 0.0.0.0 --port 8000 --workers 16
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 16
 ```
 或者，如果您在类 Unix 系统中，可以使用项目提供的脚本：
 ```bash
-bash openai_api/run.sh
+bash GPT_API/run.sh
 ```
 
-### 3. Docker 部署
+### 🐳 Docker 部署
 
 我们提供了优化后的 `Dockerfile` 用于容器化部署。
 
 **a. 构建镜像**
 ```bash
-docker build -t openai-gateway .
+docker build -t openai-api .
 ```
 
 **b. 运行容器**
@@ -113,25 +147,19 @@ docker build -t openai-gateway .
 
 ```bash
 # 1. 在宿主机创建所需目录
-mkdir -p ./config ./logs ./database
+mkdir -p ./config ./logs
 
 # 2. 将您的 config.yaml 放入 ./config 目录
 
 # 3. 运行容器
 docker run -d \
+  --name openai-api \
   -p 8000:8000 \
-  -v $(pwd)/config:/app/openai_api/config \
+  -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/database:/app/database \
-  -e OPENAI_API_KEY="sk-..." \
-  -e DEEPSEEK_API_KEY="sk-..." \
-  -e RECD_PATH="/app/database/record.db" \
-  --name openai-gateway \
-  openai-gateway
+  --restart always \
+  openai-api
 ```
-**注意**:
-- `-e RECD_PATH` 环境变量用于指定数据库文件的路径，应指向挂载的卷内。
-- API Keys 可以通过 `-e` 参数传入环境变量。
 
 ## 📖 API 端点
 
@@ -172,16 +200,3 @@ curl http://localhost:8000/v1/chat/completions \
 ├── requirements.txt             # 依赖
 └── Dockerfile                   # Docker 配置
 ```
-
-## 🤖 CI/CD (GitHub Actions)
-
-本仓库已配置 GitHub Actions 工作流 (`.github/workflows/ci.yml`)，功能包括：
-
-1.  **代码检查 (Linting)**: 在 `push` 和 `pull_request` 时自动使用 `flake8` 检查代码规范。
-2.  **构建并推送 Docker 镜像**: 当代码合并到 `main` 分支时，会自动构建 Docker 镜像并将其推送到 GitHub Container Registry (GHCR)。
-
-要使其生效，您需要在仓库的 `Settings > Secrets and variables > Actions` 中配置以下 secret：
-- `DOCKERHUB_USERNAME`: 您的 Docker Hub 用户名（或 GHCR 等其他 registry 用户名）。
-- `DOCKERHUB_TOKEN`: 您的 Docker Hub 访问令牌。
-
----
