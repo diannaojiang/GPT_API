@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 # RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 # 复制需求文件并安装，利用层缓存
-COPY openai_api/requirements.txt .
+COPY requirements.txt .
 RUN pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements.txt
 
 
@@ -31,16 +31,21 @@ COPY --from=builder /usr/src/app/wheels /wheels
 COPY --from=builder /usr/src/app/requirements.txt .
 RUN pip install --no-cache /wheels/*
 
-# 将应用代码复制到镜像中
-# 将 openai_api 目录下的所有内容复制到 /app 目录
-COPY ./openai_api /app/openai_api
+# 配置环境变量（路径自动适配新目录）
+ENV RECD_PATH=logs/record.db
 
-# 设置环境变量，指定数据库的默认容器内路径
-ENV RECD_PATH="/app/database/record.db"
+# 分步复制文件以利用构建缓存
+COPY *.py ./
+COPY utils/ ./utils
+COPY algo_sdk/ ./algo_sdk  
+# 新增的算法SDK目录复制
+
+# 创建标准目录结构
+RUN mkdir -p logs config
 
 # 暴露端口
 EXPOSE 8000
 
 # 启动命令
 # 使用 log_config=None 来让 loguru 接管日志格式
-CMD ["uvicorn", "openai_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "128"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--workers", "128"]

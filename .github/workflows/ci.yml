@@ -1,7 +1,7 @@
 # .github/workflows/ci.yml
 # 此工作流用于自动化代码检查、构建并发布支持 amd64 和 arm64 的多架构 Docker 镜像
 
-name: CI/CD - Build and Push Multi-Arch Docker Image
+name: Publish Docker image
 
 on:
   push:

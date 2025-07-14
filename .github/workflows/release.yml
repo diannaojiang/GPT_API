@@ -1,44 +1,42 @@
 # .github/workflows/release.yml
 
-name: Create Release on Commit
+name: Release
 
 on:
   push:
     branches:
-      - main # 或者您的主分支名称，例如 master
+      - main # 或者您的主分支
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    # 新增下面的 permissions 块
     permissions:
-      contents: write # 授予创建 Release 的权限
+      contents: write # 必须有写入权限来创建 Release
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # 必须获取所有历史记录才能正确计数
+
+      # 新的逻辑：获取 commit 总数来生成版本号
+      - name: Get version from commit count
+        id: version
+        run: |
+          commit_count=$(git rev-list --count HEAD)
+          echo "tag=b${commit_count}" >> $GITHUB_OUTPUT
 
       - name: Get latest commit message
         id: commit
         run: echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
-
-      - name: Create new tag
-        id: tag
-        run: |
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "b0")
-          latest_b_num=${latest_tag#b}
-          new_b_num=$((latest_b_num + 1))
-          new_tag="b${new_b_num}"
-          echo "tag=${new_tag}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          release_name: Release ${{ steps.tag.outputs.tag }}
+          # 使用上面步骤生成的 tag
+          tag_name: ${{ steps.version.outputs.tag }}
+          release_name: Release ${{ steps.version.outputs.tag }}
           body: ${{ steps.commit.outputs.message }}
           draft: false
           prerelease: false
