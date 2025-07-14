@@ -1,6 +1,6 @@
-# OpenAI API Gateway
+# OpenAI API Gateway (GPT_API)
 
-[![CI/CD](https://github.com/YOUR_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPOSITORY/actions/workflows/ci.yml)
+[![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml)
 
 一个功能强大、高可配置性的 OpenAI API 代理网关。它允许您统一管理和分发来自不同渠道、不同模型的 API 请求，并提供了丰富的功能，如负载均衡、故障转移、日志记录和多模态支持。
 
@@ -33,8 +33,8 @@
 
 **a. 克隆仓库**
 ```bash
-git clone [https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git](https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git)
-cd YOUR_REPOSITORY
+git clone [https://github.com/diannaojiang/GPT_API.git](https://github.com/diannaojiang/GPT_API.git)
+cd GPT_API
 ```
 
 **b. 安装依赖**
@@ -91,7 +91,7 @@ openai_clients:
 **d. 启动服务**
 ```bash
 # 直接通过 uvicorn 启动
-uvicorn openai_api.main:app --host 0.0.0.0 --port 7000
+uvicorn openai_api.main:app --host 0.0.0.0 --port 8000 --workers 16
 ```
 或者，如果您在类 Unix 系统中，可以使用项目提供的脚本：
 ```bash
@@ -119,7 +119,7 @@ mkdir -p ./config ./logs ./database
 
 # 3. 运行容器
 docker run -d \
-  -p 7000:7000 \
+  -p 8000:8000 \
   -v $(pwd)/config:/app/openai_api/config \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/database:/app/database \
@@ -143,7 +143,7 @@ docker run -d \
 
 **请求示例:**
 ```bash
-curl http://localhost:7000/v1/chat/completions \
+curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-4-turbo",
