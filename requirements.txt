@@ -3,7 +3,7 @@ uvicorn==0.22.0
 sqlalchemy==2.0.9
 sqlalchemy-utils==0.38.3
 pydantic==1.10.2
-openai==1.59.4
+openai
 loguru==0.7.2
 PyYAML==6.0.1
 httptools==0.6.1

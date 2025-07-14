@@ -2,7 +2,7 @@
 
 # --- Stage 1: Builder ---
 # 使用一个完整的 Python 镜像来编译依赖，这可以处理需要编译的包
-FROM python:3.9-bookworm AS builder
+FROM python:3.10-bookworm AS builder
 
 WORKDIR /usr/src/app
 
@@ -21,7 +21,7 @@ RUN pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requir
 
 # --- Stage 2: Final Image ---
 # 使用一个更轻量的基础镜像
-FROM python:3.9-slim-bookworm
+FROM python:3.10-slim-bookworm
 # 设置工作目录
 WORKDIR /app
 

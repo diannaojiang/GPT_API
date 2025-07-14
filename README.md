@@ -60,7 +60,7 @@ docker run -d \
 
 ### 1. 环境准备
 
-- Python 3.8+
+- Python 3.10+
 - Git
 
 ### 2. 本地部署
