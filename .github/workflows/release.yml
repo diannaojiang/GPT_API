@@ -5,41 +5,40 @@ name: Create Release on Commit
 on:
   push:
     branches:
-      - main  # 或者您的主分支名称，例如 master
+      - main # 或者您的主分支名称，例如 master
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # 新增下面的 permissions 块
+    permissions:
+      contents: write # 授予创建 Release 的权限
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0 # 获取所有历史记录，以便获取上一个tag
+          fetch-depth: 0
 
       - name: Get latest commit message
         id: commit
-        run: echo "::set-output name=message::$(git log -1 --pretty=%s)"
+        run: echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
 
       - name: Create new tag
         id: tag
         run: |
-          # 获取最新的 tag, 如果没有则从 b0 开始
           latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "b0")
-          # 从 tag 中提取数字部分
           latest_b_num=${latest_tag#b}
-          # 新的 b 序号
           new_b_num=$((latest_b_num + 1))
           new_tag="b${new_b_num}"
-          echo "::set-output name=tag::${new_tag}"
+          echo "tag=${new_tag}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           release_name: Release ${{ steps.tag.outputs.tag }}
-          body: |
-            ${{ steps.commit.outputs.message }}
+          body: ${{ steps.commit.outputs.message }}
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
