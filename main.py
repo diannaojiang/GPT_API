@@ -9,6 +9,7 @@ import string
 import sys
 import os
 import uvicorn
+import signal  # 导入signal模块
 
 # 第三方库导入
 from fastapi import FastAPI, Request
@@ -60,14 +61,27 @@ def read_root(request: Request):
 @app.get("/models")
 @app.get("/v1/models")
 async def list_models():
+    """
+    列出所有可用的模型，并触发所有worker重新加载配置。
+    """
     global clients, client_configs
     try:
+        # 1. 为当前worker重新加载配置，以确保本次请求返回的是最新模型
         clients = init_openai_clients()
         client_configs = load_clients()
-        logger.info(f"成功刷新模型和服务配置！")
+        logger.info(f"进程 {os.getpid()}: 成功刷新模型和服务配置！")
+
+        # 2. 向Uvicorn主进程发送SIGHUP信号，以平滑重启所有worker进程
+        #    这确保了其他worker在处理未来的请求时也会使用新配置
+        #    os.getppid() 获取父进程ID，在Uvicorn多worker模式下，它就是主进程的ID
+        parent_pid = os.getppid()
+        logger.info(f"进程 {os.getpid()}: 发送 SIGHUP 信号到主进程 (PID: {parent_pid}) 以重新加载所有工作进程。")
+        os.kill(parent_pid, signal.SIGHUP)
+
     except Exception as e:
         logger.error(f"刷新配置文件时出现错误: {e}")
 
+    # 3. 收集并返回当前（已更新）worker的模型列表
     unique_models = {}
     for client_name, client in clients.items():
         try:
@@ -94,5 +108,3 @@ async def completions(post_data: dict, request: Request):
 
 if __name__ == '__main__':
     uvicorn.run(app, host="0.0.0.0", port=7000, log_config=None)
-
-
