@@ -1,33 +1,6 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
-"""
-@File    :   main.py
-@Contact :   55k@163.com
-
-@Modify Time      @Author    @Version    @Description
-------------      -------    --------    -----------
-2023/11/20 12:45   刘行健      1.0         None
-2025/01/08 12:31   刘行健      2.0         None
-2025/02/12 21:41   刘行健      2.1         支持R1
-2025/02/17 17:30   刘明达      2.2         支持R1后处理
-2025/02/23 12:13   刘行健      2.3         支持R1-AWQ
-2025/03/07 18:33   刘行健      2.4         修复空内容报错
-2025/03/07 20:03   刘行健      2.5         支持容错自切换
-2025/03/22 23:23   刘行健      3.0         完成配置文件分离
-2025/04/15 14:03   刘行健      3.1         支持预设停止词
-2025/05/15 19:16   刘行健      3.2         支持工具调用
-2025/05/19 18:19   刘行健      3.3         修复工具调用
-2025/05/20 10:31   刘行健      3.4         修复工具调用
-2025/07/03 16:00   Gemini      3.5         支持v1/models接口
-2025/07/03 16:55   刘行健      3.6         支持模型配置刷新
-2025/07/04 12:44   刘行健      3.7         支持跨域请求配置
-2025/07/11 18:00   Gemini      4.0         实现数据库按月自动归档
-2025/07/11 18:30   Gemini      4.1         代码模块化重构
-2025/07/11 19:00   Gemini      4.2         增加/completions接口支持
-2025/07/14 11:40   刘行健      4.3         数据库区分completions接口及添加tool字段
-2025/07/15 14:00   Gemini      4.4         扩展chat completion参数并支持多模态
-2025/07/15 14:35   Gemini      4.5         增加多模态请求数据库记录
-"""
+# main.py
 
 # 标准库导入
 import re
@@ -155,6 +128,7 @@ async def legacy_completions(post_data: dict, request: Request):
                 raise e
 
         client_ip = request.client.host
+        auth_header = request.headers.get("Authorization")
         request_payload_for_log = {"prompt": api_post_data.get("prompt")}
 
         if api_post_data.get("stream", False):
@@ -171,7 +145,7 @@ async def legacy_completions(post_data: dict, request: Request):
                     if chunk_buffer:
                         final_chunk_for_log = chunk_buffer[-1]
                         final_chunk_for_log.choices[0].text = "".join(full_text_parts)
-                        log_request(client_ip, model, request_payload_for_log, final_chunk_for_log,
+                        log_request(client_ip, model, request_payload_for_log, final_chunk_for_log, auth_header,
                                     request_type=final_chunk_for_log.object)
 
                     yield "data: [DONE]\n\n"
@@ -180,7 +154,7 @@ async def legacy_completions(post_data: dict, request: Request):
                     yield f"data: {json.dumps({'error': str(e)})}\n\n"
             return StreamingResponse(stream_response(), media_type="text/event-stream")
         else:
-            log_request(client_ip, model, request_payload_for_log, response, request_type=response.object)
+            log_request(client_ip, model, request_payload_for_log, response, auth_header, request_type=response.object)
             return response
 
     except APIError as e:
@@ -270,6 +244,7 @@ async def completions(post_data: dict, request: Request):
                 raise e
 
         client_ip = request.client.host
+        auth_header = request.headers.get("Authorization")
         request_payload_for_log = {"messages": api_post_data.get("messages", [])}
 
         if api_post_data.get("stream", False):
@@ -301,7 +276,7 @@ async def completions(post_data: dict, request: Request):
                                 class MockChoice: message = {}
                                 final_chunk.choices = [MockChoice()]
                         final_chunk.choices[0].message = {"content": content, "role": chunk_buffer[0].choices[0].delta.role or "assistant"}
-                        log_request(client_ip, model, request_payload_for_log, final_chunk,
+                        log_request(client_ip, model, request_payload_for_log, final_chunk, auth_header,
                                     request_type=final_chunk.object, tools_used=tools_used, is_multimodal=is_multimodal)
 
                     yield "data: [DONE]\n\n"
@@ -313,7 +288,7 @@ async def completions(post_data: dict, request: Request):
             response_data = response
             if response_data and len(response_data.choices) > 0 and cfg.special_prefix:
                 response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
-            log_request(client_ip, model, request_payload_for_log, response_data,
+            log_request(client_ip, model, request_payload_for_log, response_data, auth_header,
                         request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
             return response_data
 
