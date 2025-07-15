@@ -9,7 +9,8 @@ import string
 import sys
 import os
 import uvicorn
-import signal  # 导入signal模块
+import signal  # signal模块仍然保留，以备将来使用，但当前逻辑不使用它
+import pathlib # 导入pathlib用于处理文件路径
 
 # 第三方库导入
 from fastapi import FastAPI, Request
@@ -26,6 +27,67 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, 'algo_sdk'))
 app = FastAPI()
 
+# -------- 新增：配置热重载逻辑 --------
+
+# 每个工作进程都会有自己独立的全局变量副本
+RELOAD_TRIGGER_FILE = pathlib.Path(os.path.join(BASE_DIR, "reload.trigger"))
+last_config_reload_time = 0.0  # 上次加载配置的时间戳
+clients = {}
+client_configs = {}
+
+def perform_config_reload():
+    """
+    为当前工作进程执行实际的配置重载逻辑。
+    """
+    global clients, client_configs, last_config_reload_time
+    # logger.info(f"进程 {os.getpid()}: 检测到配置更新信号，正在重新加载...")
+    try:
+        # 重新初始化客户端和配置
+        new_clients = init_openai_clients()
+        new_client_configs = load_clients()
+        clients = new_clients
+        client_configs = new_client_configs
+        
+        # 更新本进程的最后加载时间为触发文件的修改时间
+        last_config_reload_time = RELOAD_TRIGGER_FILE.stat().st_mtime
+        logger.info(f"进程 {os.getpid()}: 配置加载成功。")
+    except Exception as e:
+        logger.error(f"进程 {os.getpid()}: 加载配置时出错: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    应用启动时执行的事件。
+    1. 确保触发文件存在。
+    2. 执行一次初始的配置加载。
+    """
+    RELOAD_TRIGGER_FILE.touch(exist_ok=True)
+    perform_config_reload()
+
+@app.middleware("http")
+async def check_reload_middleware(request: Request, call_next):
+    """
+    在每个请求前检查是否需要重载配置的中间件。
+    """
+    global last_config_reload_time
+    try:
+        # 文件系统stat调用非常快，对性能影响可以忽略不计
+        if RELOAD_TRIGGER_FILE.stat().st_mtime > last_config_reload_time:
+            perform_config_reload()
+    except FileNotFoundError:
+        logger.warning(f"重载触发文件 '{RELOAD_TRIGGER_FILE}' 未找到。将重新创建并重载。")
+        RELOAD_TRIGGER_FILE.touch(exist_ok=True)
+        perform_config_reload()
+    except Exception as e:
+        # 即使检查失败，也应继续处理请求
+        logger.error(f"检查配置重载时发生意外错误: {e}")
+    
+    response = await call_next(request)
+    return response
+
+# -------- 热重载逻辑结束 --------
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,6 +96,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 注意：上面的check_reload_middleware会先于下面的log_requests执行
 @app.middleware("http")
 async def log_requests(request, call_next):
     idem = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -48,9 +111,9 @@ async def log_requests(request, call_next):
 class Item(BaseModel):
     text: str
 
-# 初始化客户端配置
-clients = init_openai_clients()
-client_configs = load_clients()
+# 初始化的逻辑已移至 startup_event 中，此处不再需要
+# clients = init_openai_clients()
+# client_configs = load_clients()
 
 # --------API---------
 
@@ -58,31 +121,34 @@ client_configs = load_clients()
 def read_root(request: Request):
     return {"message": "Hello World", "client_ip": request.client.host}
 
+@app.get("/health", status_code=200)
+async def health_check():
+    """
+    提供给Docker HEALTHCHECK的健康检查接口。
+    """
+    return {"status": "ok"}
+
 @app.get("/models")
 @app.get("/v1/models")
 async def list_models():
     """
-    列出所有可用的模型，并触发所有worker重新加载配置。
+    列出所有可用的模型，并通过更新触发文件来通知所有工作进程在下次请求时重新加载配置。
     """
-    global clients, client_configs
     try:
-        # 1. 为当前worker重新加载配置，以确保本次请求返回的是最新模型
-        clients = init_openai_clients()
-        client_configs = load_clients()
-        logger.info(f"进程 {os.getpid()}: 成功刷新模型和服务配置！")
+        # 1. 更新触发文件的修改时间，以此向所有工作进程发送“重载”信号
+        logger.info(f"进程 {os.getpid()}: 收到/models请求，已发出全局配置重载信号。")
+        RELOAD_TRIGGER_FILE.touch(exist_ok=True)
 
-        # 2. 向Uvicorn主进程发送SIGHUP信号，以平滑重启所有worker进程
-        #    这确保了其他worker在处理未来的请求时也会使用新配置
-        #    os.getppid() 获取父进程ID，在Uvicorn多worker模式下，它就是主进程的ID
-        parent_pid = os.getppid()
-        logger.info(f"进程 {os.getpid()}: 发送 SIGHUP 信号到主进程 (PID: {parent_pid}) 以重新加载所有工作进程。")
-        os.kill(parent_pid, signal.SIGHUP)
+        # 2. 为确保本次请求能立即返回最新的模型列表，强制当前进程也重载一次
+        perform_config_reload()
 
     except Exception as e:
         logger.error(f"刷新配置文件时出现错误: {e}")
+        return JSONResponse(status_code=500, content={"error": f"触发重载失败: {e}"})
 
-    # 3. 收集并返回当前（已更新）worker的模型列表
+    # 3. 收集并返回当前（已更新）工作进程的模型列表
     unique_models = {}
+    # 使用全局的clients变量，它已经被perform_config_reload更新了
     for client_name, client in clients.items():
         try:
             models_list = client.models.list()

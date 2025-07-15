@@ -123,15 +123,14 @@ async def handle_api_request(
 
         client_ip = request.client.host
         auth_header = request.headers.get("Authorization")
-        request_payload_for_log = {"prompt": api_post_data.get("prompt")} if api_type == "completions" else {"messages": api_post_data.get("messages", [])}
 
         if api_post_data.get("stream", False):
-            return StreamingResponse(stream_response_generator(response, client_ip, model, request_payload_for_log, auth_header, api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
+            return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, auth_header, api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
         else:
             response_data = response
             if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and cfg.special_prefix:
                 response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
-            log_request(client_ip, model, request_payload_for_log, response_data, auth_header,
+            log_request(client_ip, model, api_post_data, response_data, auth_header,
                         request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
             return response_data
 
@@ -145,7 +144,7 @@ async def stream_response_generator(
     response: AsyncGenerator, # 虽然类型提示是 AsyncGenerator，但实际传入的是 Stream 对象
     client_ip: str,
     model: str,
-    request_payload_for_log: dict,
+    request_payload: dict,
     auth_header: str,
     api_type: str,
     tools_used: bool,
@@ -189,7 +188,7 @@ async def stream_response_generator(
             if api_type == "completions":
                 if final_chunk.choices:
                     final_chunk.choices[0].text = "".join(full_text_parts)
-                log_request(client_ip, model, request_payload_for_log, final_chunk, auth_header,
+                log_request(client_ip, model, request_payload, final_chunk, auth_header,
                             request_type=final_chunk.object)
             else: # chat.completions
                 if not final_chunk.choices or len(final_chunk.choices) == 0:
@@ -210,11 +209,10 @@ async def stream_response_generator(
                     final_chunk.choices[0].message["role"] = chunk_buffer[0].choices[0].delta.role or "assistant"
                 else:
                     final_chunk.choices[0].message["role"] = "assistant"
-                log_request(client_ip, model, request_payload_for_log, final_chunk, auth_header,
+                log_request(client_ip, model, request_payload, final_chunk, auth_header,
                             request_type=final_chunk.object, tools_used=tools_used, is_multimodal=is_multimodal)
 
         yield "data: [DONE]\n\n"
     except Exception as e:
         logger.error(traceback.format_exc())
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
-

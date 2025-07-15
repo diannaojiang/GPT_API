@@ -6,3 +6,4 @@ config/*
 logs/*
 *.tar
 *.gz
+reload.trigger

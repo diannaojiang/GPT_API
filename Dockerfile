@@ -46,6 +46,8 @@ RUN mkdir -p logs config
 # 暴露端口
 EXPOSE 8000
 
+HEALTHCHECK --interval=5m CMD [ "curl", "-f", "http://localhost:8000/health" ]
+
 # 启动命令
 # 使用 log_config=None 来让 loguru 接管日志格式
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--workers", "128"]
