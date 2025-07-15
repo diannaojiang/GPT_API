@@ -69,7 +69,6 @@ async def check_reload_middleware(request: Request, call_next):
     """
     在每个请求前检查是否需要重载配置的中间件。
     """
-    global last_config_reload_time
     try:
         # 文件系统stat调用非常快，对性能影响可以忽略不计
         if RELOAD_TRIGGER_FILE.stat().st_mtime > last_config_reload_time:
