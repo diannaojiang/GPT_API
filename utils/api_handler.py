@@ -1,4 +1,4 @@
-# utils/api_handler.py
+# openai_api/utils/api_handler.py
 
 import json
 import traceback
@@ -36,6 +36,14 @@ async def handle_api_request(
                 return JSONResponse(status_code=404, content={"object": "error", "message": f"The model `{model_name}` does not exist.", "type": "NotFoundError"})
             else:
                 return JSONResponse(status_code=404, content={"object": "error", "message": str(e), "type": "NotFoundError"})
+
+        # 新增逻辑：如果配置中没有api_key，则尝试透传Authorization头
+        auth_header = request.headers.get("Authorization")
+        if not cfg.api_key and auth_header:
+            # 提取token，通常是 "Bearer <token>" 的形式
+            token = auth_header.split(" ")[-1]
+            # 使用 with_options 创建一个临时的、带有新api_key的客户端实例
+            client = client.with_options(api_key=token)
 
         api_post_data = post_data.copy()
 
@@ -192,14 +200,14 @@ async def stream_response_generator(
                             request_type=final_chunk.object)
             else: # chat.completions
                 if not final_chunk.choices or len(final_chunk.choices) == 0:
-                    if len(chunk_buffer) > 1: 
+                    if len(chunk_buffer) > 1:
                         final_chunk.choices = chunk_buffer[-2].choices
                     else:
                         class MockChoice:
                             def __init__(self):
                                 self.message = {}
                         final_chunk.choices = [MockChoice()]
-                
+
                 if not hasattr(final_chunk.choices[0], 'message'):
                     final_chunk.choices[0].message = {}
 
