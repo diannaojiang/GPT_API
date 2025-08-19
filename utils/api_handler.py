@@ -7,11 +7,11 @@ from typing import AsyncGenerator, Tuple
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from openai import APIError
+from openai import APIError, APIConnectionError
 
 from utils.log import logger
 from utils.db_handler import log_request
-from utils.client_handler import find_matching_client
+from utils.client_handler import get_clients_for_model
 from utils.request_handler import process_messages
 from config import ClientConfig
 
@@ -28,7 +28,7 @@ async def handle_api_request(
     try:
         model = post_data.get("model")
         try:
-            client, cfg = find_matching_client(model, client_configs, clients)
+            sorted_clients = get_clients_for_model(model, client_configs, clients)
         except ValueError as e:
             # 对于聊天接口，提供更友好的模型不存在提示
             if api_type == "chat.completions":
@@ -37,116 +37,122 @@ async def handle_api_request(
             else:
                 return JSONResponse(status_code=404, content={"object": "error", "message": str(e), "type": "NotFoundError"})
 
-        # 新增逻辑：如果配置中没有api_key，则尝试透传Authorization头
-        auth_header = request.headers.get("Authorization")
-        if not cfg.api_key and auth_header:
-            # 提取token，通常是 "Bearer <token>" 的形式
-            token = auth_header.split(" ")[-1]
-            # 使用 with_options 创建一个临时的、带有新api_key的客户端实例
-            client = client.with_options(api_key=token)
+        last_error = None
+        for client, cfg in sorted_clients:
+            try:
+                # 新增逻辑：如果配置中没有api_key，则尝试透传Authorization头
+                auth_header = request.headers.get("Authorization")
+                if not cfg.api_key and auth_header:
+                    token = auth_header.split(" ")[-1]
+                    client = client.with_options(api_key=token)
 
-        api_post_data = post_data.copy()
+                api_post_data = post_data.copy()
 
-        # 处理max_tokens
-        if api_type == "chat.completions" and cfg.max_tokens:
-            api_post_data["max_tokens"] = min(api_post_data.get("max_tokens", cfg.max_tokens), cfg.max_tokens)
+                if api_type == "chat.completions" and cfg.max_tokens:
+                    api_post_data["max_tokens"] = min(api_post_data.get("max_tokens", cfg.max_tokens), cfg.max_tokens)
 
-        # 处理messages和多模态判断
-        is_multimodal = False
-        if api_type == "chat.completions" and "messages" in api_post_data:
-            messages = api_post_data["messages"]
-            messages_fix = []
-            for message in messages:
-                content = message.get("content")
-                if content is None:
-                    if "tool_calls" in message:
-                        pass
+                is_multimodal = False
+                if api_type == "chat.completions" and "messages" in api_post_data:
+                    messages = api_post_data["messages"]
+                    messages_fix = []
+                    for message in messages:
+                        content = message.get("content")
+                        if content is None:
+                            if "tool_calls" in message:
+                                pass
+                            else:
+                                raise ValueError("未找到 'content'")
+                        else:
+                            if isinstance(content, str):
+                                if len(content) == 0:
+                                    continue
+                                if message.get("role") == "assistant":
+                                    message["content"] = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+                            elif isinstance(content, list):
+                                for item in content:
+                                    if isinstance(item, dict) and item.get("type") != "text":
+                                        is_multimodal = True
+                                        break
+                        messages_fix.append(message)
+                        if is_multimodal:
+                            break
+                    api_post_data["messages"] = process_messages(messages_fix)
+
+                if cfg.stop:
+                    if "stop" in api_post_data and api_post_data["stop"]:
+                        existing_stop = api_post_data["stop"]
+                        if not isinstance(existing_stop, list): existing_stop = [existing_stop]
+                        cfg_stop = cfg.stop if isinstance(cfg.stop, list) else [cfg.stop]
+                        api_post_data["stop"] = list(set(existing_stop + cfg_stop))
                     else:
-                        raise ValueError("未找到 'content'")
-                else:
-                    if isinstance(content, str):
-                        if len(content) == 0:
-                            continue
-                        if message.get("role") == "assistant":
-                            message["content"] = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-                    elif isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") != "text":
-                                is_multimodal = True
-                                break
-                messages_fix.append(message)
-                if is_multimodal:
-                    break
-            api_post_data["messages"] = process_messages(messages_fix)
+                        api_post_data["stop"] = cfg.stop
 
-        # 处理stop参数
-        if cfg.stop:
-            if "stop" in api_post_data and api_post_data["stop"]:
-                existing_stop = api_post_data["stop"]
-                if not isinstance(existing_stop, list): existing_stop = [existing_stop]
-                cfg_stop = cfg.stop if isinstance(cfg.stop, list) else [cfg.stop]
-                api_post_data["stop"] = list(set(existing_stop + cfg_stop))
-            else:
-                api_post_data["stop"] = cfg.stop
-
-        # 移除不允许的键
-        if api_type == "completions":
-            allowed_keys = {
-                "model", "prompt", "best_of", "echo", "frequency_penalty", "logit_bias", "logprobs",
-                "max_tokens", "n", "presence_penalty", "seed", "stop", "stream", "stream_options",
-                "suffix", "temperature", "top_p", "user"
-            }
-        else: # chat.completions
-            allowed_keys = {
-                "model", "messages", "max_tokens", "stream", "temperature", "top_p",
-                "presence_penalty", "frequency_penalty", "stop", "tool_choice", "tools",
-                "audio", "function_call", "functions", "logit_bias", "logprobs",
-                "max_completion_tokens", "metadata", "modalities", "n",
-                "parallel_tool_calls", "prediction", "reasoning_effort",
-                "response_format", "seed", "service_tier", "store", "stream_options",
-                "top_logprobs", "user", "web_search_options"
-            }
-        api_post_data = {key: value for key, value in api_post_data.items() if key in allowed_keys}
-
-        tools_used = "tools" in api_post_data and api_post_data["tools"] is not None
-
-        try:
-            if api_type == "completions":
-                response = client.completions.create(**api_post_data)
-            else:
-                response = client.chat.completions.create(**api_post_data)
-        except APIError as e:
-            if cfg.fallback:
-                logger.warning(f"Initial request failed: {e}, retrying with fallback model {cfg.fallback}...")
-                fallback_post_data = api_post_data.copy()
-                fallback_post_data["model"] = cfg.fallback
-                # 重新查找客户端和配置
-                client, cfg = find_matching_client(cfg.fallback, client_configs, clients)
                 if api_type == "completions":
-                    response = client.completions.create(**fallback_post_data)
+                    allowed_keys = {"model", "prompt", "best_of", "echo", "frequency_penalty", "logit_bias", "logprobs", "max_tokens", "n", "presence_penalty", "seed", "stop", "stream", "stream_options", "suffix", "temperature", "top_p", "user"}
                 else:
-                    response = client.chat.completions.create(**fallback_post_data)
-            else:
-                raise e
+                    allowed_keys = {"model", "messages", "max_tokens", "stream", "temperature", "top_p", "presence_penalty", "frequency_penalty", "stop", "tool_choice", "tools", "audio", "function_call", "functions", "logit_bias", "logprobs", "max_completion_tokens", "metadata", "modalities", "n", "parallel_tool_calls", "prediction", "reasoning_effort", "response_format", "seed", "service_tier", "store", "stream_options", "top_logprobs", "user", "web_search_options"}
+                api_post_data = {key: value for key, value in api_post_data.items() if key in allowed_keys}
 
-        client_ip = request.client.host
-        auth_header = request.headers.get("Authorization")
+                tools_used = "tools" in api_post_data and api_post_data["tools"] is not None
 
-        if api_post_data.get("stream", False):
-            return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, auth_header, api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
-        else:
-            response_data = response
-            if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and cfg.special_prefix:
-                response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
-            log_request(client_ip, model, api_post_data, response_data, auth_header,
-                        request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
-            return response_data
+                if api_type == "completions":
+                    response = client.completions.create(**api_post_data)
+                else:
+                    response = client.chat.completions.create(**api_post_data)
+
+                client_ip = request.client.host
+                if api_post_data.get("stream", False):
+                    return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, auth_header, api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
+                else:
+                    response_data = response
+                    if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and cfg.special_prefix:
+                        response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
+                    log_request(client_ip, model, api_post_data, response_data, auth_header, request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
+                    return response_data
+
+            except (APIError, APIConnectionError) as e:
+                logger.warning(f"Connection to client {cfg.name} failed: {e}. Trying next client.")
+                last_error = e
+                if cfg.fallback:
+                    logger.info(f"Falling back to model {cfg.fallback}")
+                    try:
+                        fallback_clients = get_clients_for_model(cfg.fallback, client_configs, clients)
+                        for fallback_client, fallback_cfg in fallback_clients:
+                            # Create a new post_data with the fallback model
+                            fallback_post_data = post_data.copy()
+                            fallback_post_data['model'] = cfg.fallback
+                            # Try the request again with the fallback client
+                            if api_type == "completions":
+                                response = fallback_client.completions.create(**fallback_post_data)
+                            else:
+                                response = fallback_client.chat.completions.create(**fallback_post_data)
+
+                            client_ip = request.client.host
+                            if fallback_post_data.get("stream", False):
+                                return StreamingResponse(stream_response_generator(response, client_ip, cfg.fallback, fallback_post_data, auth_header, api_type, tools_used, is_multimodal, fallback_cfg.special_prefix), media_type="text/event-stream")
+                            else:
+                                response_data = response
+                                if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and fallback_cfg.special_prefix:
+                                    response_data.choices[0].message.content = f"{fallback_cfg.special_prefix}\n" + response_data.choices[0].message.content
+                                log_request(client_ip, cfg.fallback, fallback_post_data, response_data, auth_header, request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
+                                return response_data
+                    except Exception as fallback_e:
+                        last_error = fallback_e
+                continue
+
+        if last_error:
+            raise last_error
 
     except APIError as e:
-        return JSONResponse(status_code=e.status_code, content=e.body)
+        if hasattr(e, 'status_code') and hasattr(e, 'body'):
+            return JSONResponse(status_code=e.status_code, content=e.body)
+        else:
+            logger.error(f"Caught an APIError without status_code or body: {e}")
+            return JSONResponse(status_code=500, content={"object": "error", "message": f"An unexpected API error occurred: {str(e)}", "type": "InternalError"})
     except Exception as e:
         logger.error(traceback.format_exc())
         return JSONResponse(status_code=500, content={"object": "error", "message": str(e), "type": "InternalError"})
+
 
 async def stream_response_generator(
     response: AsyncGenerator, # 虽然类型提示是 AsyncGenerator，但实际传入的是 Stream 对象

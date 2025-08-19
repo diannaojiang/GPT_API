@@ -10,7 +10,7 @@ class ClientConfig:
         self.api_key = self._parse_env_var(config["api_key"])
         self.base_url = config["base_url"]
         self.model_match = config["model_match"]
-        self.priority = config.get("priority", 999)
+        self.priority = config.get("priority", 1)
         self.max_tokens = config.get("max_tokens")
         self.special_prefix = config.get("special_prefix")
         self.stop = config.get("stop")
@@ -29,7 +29,7 @@ def load_clients() -> List[ClientConfig]:
         config = yaml.safe_load(f)
     
     clients = [ClientConfig(c) for c in config["openai_clients"]]
-    return sorted(clients, key=lambda x: x.priority)
+    return clients
 
 def init_openai_clients() -> Dict[str, OpenAI]:
     """初始化所有OpenAI客户端"""

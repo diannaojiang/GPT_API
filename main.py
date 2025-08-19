@@ -18,6 +18,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from openai import APIConnectionError
+
 # 本地应用导入
 from utils.log import logger
 from utils.api_handler import handle_api_request
@@ -25,7 +27,7 @@ from config import load_clients, init_openai_clients
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, 'algo_sdk'))
-app = FastAPI()
+app = FastAPI(title="GPT_API", version="1.0.0")
 
 # -------- 新增：配置热重载逻辑 --------
 
@@ -147,15 +149,20 @@ async def list_models():
 
     # 3. 收集并返回当前（已更新）工作进程的模型列表
     unique_models = {}
+    successful_clients = 0
     # 使用全局的clients变量，它已经被perform_config_reload更新了
     for client_name, client in clients.items():
         try:
             models_list = client.models.list()
             for model in models_list.data:
                 unique_models[model.id] = model.model_dump()
-        except Exception as e:
-            logger.error(f"从客户端 '{client_name}' ({client.base_url}) 获取模型时发生错误: {e}")
+            successful_clients += 1
+        except APIConnectionError as e:
+            logger.error(f"从客户端 '{client_name}' ({client.base_url}) 获取模型时发生连接错误: {e}")
             continue
+
+    if successful_clients == 0:
+        return JSONResponse(status_code=500, content={"object": "error", "message": "Failed to fetch models from any client.", "type": "InternalError"})
 
     return JSONResponse(content={"object": "list", "data": list(unique_models.values())})
 

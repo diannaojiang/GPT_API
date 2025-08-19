@@ -27,25 +27,32 @@ def find_matching_clients(model_name: str, client_configs: list[ClientConfig]) -
             
     return matching_configs
 
-def select_client_by_weight(matching_configs: List[ClientConfig], clients: dict) -> Tuple[OpenAI, ClientConfig]:
+def select_clients_by_weight(matching_configs: List[ClientConfig]) -> List[ClientConfig]:
     """
-    从匹配的配置列表中，根据 priority (权重) 随机选择一个。
-    priority 值直接作为权重。如果未设置，默认为 1。
+    根据 priority (权重) 对匹配的配置列表进行加权随机排序。
+    使用 Efraimidis-Spirakis A-Res 算法进行加权随机抽样（无替换）。
     """
     if not matching_configs:
-        raise ValueError("Cannot select a client from an empty list of configs.")
+        return []
 
-    # priority 默认值为 1
-    weights = [cfg.priority if cfg.priority and cfg.priority > 0 else 1 for cfg in matching_configs]
-    
-    # 使用 priorities 作为权重进行随机选择
-    selected_cfg = random.choices(matching_configs, weights=weights, k=1)[0]
-    
-    return clients[selected_cfg.name], selected_cfg
+    # 为每个配置计算一个随机键，该键由其权重决定
+    # weight = 1 / priority
+    # key = random.uniform(0, 1) ** weight
+    weighted_list = []
+    for cfg in matching_configs:
+        weight = cfg.priority if cfg.priority and cfg.priority > 0 else 1
+        key = random.uniform(0, 1) ** (1 / weight)
+        weighted_list.append((cfg, key))
 
-def get_client_for_model(model_name: str, client_configs: list[ClientConfig], clients: dict) -> Tuple[OpenAI, ClientConfig]:
+    # 按计算出的键进行降序排序
+    weighted_list.sort(key=lambda x: x[1], reverse=True)
+
+    # 返回排序后的配置列表
+    return [cfg for cfg, key in weighted_list]
+
+def get_clients_for_model(model_name: str, client_configs: list[ClientConfig], clients: dict) -> List[Tuple[OpenAI, ClientConfig]]:
     """
-    主函数，封装了查找、选择和返回客户端的整个过程。
+    主函数，封装了查找、加权随机排序和返回客户端列表的整个过程。
     """
     # 1. 找到所有匹配的配置
     matching_configs = find_matching_clients(model_name, client_configs)
@@ -54,10 +61,8 @@ def get_client_for_model(model_name: str, client_configs: list[ClientConfig], cl
     if not matching_configs:
         raise ValueError(f"No client configuration found for model {model_name}")
         
-    # 3. 如果只有一个匹配项，直接返回
-    if len(matching_configs) == 1:
-        selected_cfg = matching_configs[0]
-        return clients[selected_cfg.name], selected_cfg
-        
-    # 4. 如果有多个匹配项，根据权重选择
-    return select_client_by_weight(matching_configs, clients)
+    # 3. 根据权重（优先级）对匹配的客户端进行加权随机排序
+    shuffled_configs = select_clients_by_weight(matching_configs)
+    
+    # 4. 返回排序后的客户端列表
+    return [(clients[cfg.name], cfg) for cfg in shuffled_configs]
