@@ -3,7 +3,7 @@
 import json
 import traceback
 import re
-from typing import AsyncGenerator, Tuple
+from typing import AsyncGenerator, Tuple, Dict, Any
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -14,6 +14,67 @@ from utils.db_handler import log_request
 from utils.client_handler import get_clients_for_model
 from utils.request_handler import process_messages
 from config import ClientConfig
+
+
+def convert_openai_error_to_standard_format(e: APIError) -> Tuple[Dict[str, Any], int]:
+    """
+    将OpenAI的错误转换为统一的错误格式，并返回相应的HTTP状态码。
+    """
+    error_message = "An unexpected error occurred."
+    error_type = "InternalError"
+    status_code = getattr(e, 'status_code', 500)
+    
+    # 如果e本身就有message属性，直接使用
+    if hasattr(e, 'message') and e.message:
+        error_message = str(e.message)
+    
+    if hasattr(e, 'body') and isinstance(e.body, dict):
+        # 如果错误体中有message字段，则使用它作为错误信息
+        if 'message' in e.body:
+            error_message = e.body['message']
+        # 如果错误体中有error字段，且是字符串，则使用它作为错误信息
+        elif 'error' in e.body and isinstance(e.body['error'], str):
+            error_message = e.body['error']
+        # 如果错误体中有error.message字段，则使用它作为错误信息
+        elif 'error' in e.body and isinstance(e.body['  error'], dict) and 'message' in e.body['error']:
+            error_message = e.body['error']['message']
+        # 如果错误体中有error字段，且是字典，则使用它作为错误信息
+        elif 'error' in e.body and isinstance(e.body['error'], dict) and 'message' in e.body['error']:
+            error_message = e.body['error']['message']
+            
+        # 如果错误体中有type字段，则使用它作为错误类型
+        if 'type' in e.body:
+            error_type = e.body['type']
+        # 如果错误体中有error.type字段，则使用它作为错误类型
+        elif 'error' in e.body and isinstance(e.body['error'], dict) and 'type' in e.body['error']:
+            error_type = e.body['error']['type']
+        elif 'error' in e.body and isinstance(e.body['  error'], dict) and 'type' in e.body['error']:
+            error_type = e.body['error']['type']
+    
+    # 根据error_type映射HTTP状态码
+    if error_type == "invalid_request_error":
+        status_code = 400
+    elif error_type == "authentication_error":
+        status_code = 401
+    elif error_type == "permission_denied_error":
+        status_code = 403
+    elif error_type == "rate_limit_exceeded_error":
+        status_code = 429
+    elif error_type == "insufficient_quota_error":
+        status_code = 429
+    elif error_type == "server_error":
+        status_code = 500
+    elif error_type == "service_unavailable_error":
+        status_code = 503
+    elif error_type == "timeout_error":
+        status_code = 504
+    
+    return {
+        "error": {
+            "message": str(error_message),
+            "type": str(error_type)
+        }
+    }, status_code
 
 async def handle_api_request(
     request: Request,
@@ -33,9 +94,9 @@ async def handle_api_request(
             # 对于聊天接口，提供更友好的模型不存在提示
             if api_type == "chat.completions":
                 model_name = str(e).split("model ")[-1].strip()
-                return JSONResponse(status_code=404, content={"object": "error", "message": f"The model `{model_name}` does not exist.", "type": "NotFoundError"})
+                return JSONResponse(status_code=404, content={"error": f"The model `{model_name}` does not exist.", "error_type": "NotFoundError"})
             else:
-                return JSONResponse(status_code=404, content={"object": "error", "message": str(e), "type": "NotFoundError"})
+                return JSONResponse(status_code=404, content={"error": str(e), "error_type": "NotFoundError"})
 
         last_error = None
         for client, cfg in sorted_clients:
@@ -144,14 +205,11 @@ async def handle_api_request(
             raise last_error
 
     except APIError as e:
-        if hasattr(e, 'status_code') and hasattr(e, 'body'):
-            return JSONResponse(status_code=e.status_code, content=e.body)
-        else:
-            logger.error(f"Caught an APIError without status_code or body: {e}")
-            return JSONResponse(status_code=500, content={"object": "error", "message": f"An unexpected API error occurred: {str(e)}", "type": "InternalError"})
+        error_content, status_code = convert_openai_error_to_standard_format(e)
+        return JSONResponse(status_code=status_code, content=error_content)
     except Exception as e:
         logger.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"object": "error", "message": str(e), "type": "InternalError"})
+        return JSONResponse(status_code=500, content={"error": {"message": str(e), "type": "InternalError"}})
 
 
 async def stream_response_generator(
@@ -229,4 +287,4 @@ async def stream_response_generator(
         yield "data: [DONE]\n\n"
     except Exception as e:
         logger.error(traceback.format_exc())
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'InternalError'}})}\n\n"
