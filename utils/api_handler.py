@@ -102,12 +102,12 @@ async def handle_api_request(
 
                 client_ip = request.client.host
                 if api_post_data.get("stream", False):
-                    return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, auth_header, api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
+                    return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, dict(request.headers), api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
                 else:
                     response_data = response
                     if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and cfg.special_prefix:
                         response_data.choices[0].message.content = f"{cfg.special_prefix}\n" + response_data.choices[0].message.content
-                    log_request(client_ip, model, api_post_data, response_data, auth_header, request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
+                    log_request(client_ip, model, api_post_data, response_data, dict(request.headers), request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
                     return response_data
 
             except (APIError, APIConnectionError) as e:
@@ -129,12 +129,12 @@ async def handle_api_request(
 
                             client_ip = request.client.host
                             if fallback_post_data.get("stream", False):
-                                return StreamingResponse(stream_response_generator(response, client_ip, cfg.fallback, fallback_post_data, auth_header, api_type, tools_used, is_multimodal, fallback_cfg.special_prefix), media_type="text/event-stream")
+                                return StreamingResponse(stream_response_generator(response, client_ip, cfg.fallback, fallback_post_data, dict(request.headers), api_type, tools_used, is_multimodal, fallback_cfg.special_prefix), media_type="text/event-stream")
                             else:
                                 response_data = response
                                 if api_type == "chat.completions" and response_data and len(response_data.choices) > 0 and fallback_cfg.special_prefix:
                                     response_data.choices[0].message.content = f"{fallback_cfg.special_prefix}\n" + response_data.choices[0].message.content
-                                log_request(client_ip, cfg.fallback, fallback_post_data, response_data, auth_header, request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
+                                log_request(client_ip, cfg.fallback, fallback_post_data, response_data, dict(request.headers), request_type=response_data.object, tools_used=tools_used, is_multimodal=is_multimodal)
                                 return response_data
                     except Exception as fallback_e:
                         last_error = fallback_e
@@ -171,7 +171,7 @@ async def stream_response_generator(
     client_ip: str,
     model: str,
     request_payload: dict,
-    auth_header: str,
+    headers: dict,
     api_type: str,
     tools_used: bool,
     is_multimodal: bool,
@@ -214,7 +214,7 @@ async def stream_response_generator(
             if api_type == "completions":
                 if final_chunk.choices:
                     final_chunk.choices[0].text = "".join(full_text_parts)
-                log_request(client_ip, model, request_payload, final_chunk, auth_header,
+                log_request(client_ip, model, request_payload, final_chunk, headers,
                             request_type=final_chunk.object)
             else: # chat.completions
                 if not final_chunk.choices or len(final_chunk.choices) == 0:
@@ -235,7 +235,7 @@ async def stream_response_generator(
                     final_chunk.choices[0].message["role"] = chunk_buffer[0].choices[0].delta.role or "assistant"
                 else:
                     final_chunk.choices[0].message["role"] = "assistant"
-                log_request(client_ip, model, request_payload, final_chunk, auth_header,
+                log_request(client_ip, model, request_payload, final_chunk, headers,
                             request_type=final_chunk.object, tools_used=tools_used, is_multimodal=is_multimodal)
 
         yield "data: [DONE]\n\n"

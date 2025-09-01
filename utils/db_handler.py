@@ -30,7 +30,7 @@ class Record(Base):
     TotalTokens = Column(Integer)
     Tool = Column(Boolean, default=False)  # 记录是否使用了 tool
     Multimodal = Column(Boolean, default=False)  # 记录是否有多模态请求
-    Authorization = Column(Text) # 新增 Authorization 字段
+    Headers = Column(Text)  # 新增 Headers 字段，用于存储整个请求头
     # --- 结束 ---
     Request = Column(Text)
     Response = Column(Text)
@@ -113,7 +113,7 @@ def session_scope():
     finally:
         session.close()
 
-def log_request(client_ip: str, model: str, request_payload: dict, response: object, authorization: str, request_type: str = None, tools_used: bool = False,is_multimodal: bool = False):
+def log_request(client_ip: str, model: str, request_payload: dict, response: object, headers: dict, request_type: str = None, tools_used: bool = False,is_multimodal: bool = False):
     """
     将请求写入数据库，并在失败时根据您的思路进行一次自动重试。
     """
@@ -133,7 +133,7 @@ def log_request(client_ip: str, model: str, request_payload: dict, response: obj
         "TotalTokens": total_tokens,
         "Tool": tools_used,
         "Multimodal": is_multimodal,
-        "Authorization": authorization,
+        "Headers": json.dumps(headers, ensure_ascii=False),
         "Request": json.dumps(request_payload, ensure_ascii=False),
         "Response": json.dumps(response.to_dict(), ensure_ascii=False),
     }
