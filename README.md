@@ -47,7 +47,7 @@ docker run -d \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b36
+  ghcr.io/diannaojiang/openai-api:b38
 ```
 说明:
 
