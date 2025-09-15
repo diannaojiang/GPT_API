@@ -100,7 +100,11 @@ async def handle_api_request(
                 else:
                     response = client.chat.completions.create(**api_post_data)
 
-                client_ip = request.client.host
+                # 获取客户端IP地址，优先检查代理头部
+                client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or \
+                            request.headers.get("x-real-ip", "").strip() or \
+                            request.client.host
+                
                 if api_post_data.get("stream", False):
                     return StreamingResponse(stream_response_generator(response, client_ip, model, api_post_data, dict(request.headers), api_type, tools_used, is_multimodal, cfg.special_prefix), media_type="text/event-stream")
                 else:
@@ -127,7 +131,11 @@ async def handle_api_request(
                             else:
                                 response = fallback_client.chat.completions.create(**fallback_post_data)
 
-                            client_ip = request.client.host
+                            # 获取客户端IP地址，优先检查代理头部
+                            client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or 
+                                        request.headers.get("x-real-ip", "").strip() or 
+                                        request.client.host
+
                             if fallback_post_data.get("stream", False):
                                 return StreamingResponse(stream_response_generator(response, client_ip, cfg.fallback, fallback_post_data, dict(request.headers), api_type, tools_used, is_multimodal, fallback_cfg.special_prefix), media_type="text/event-stream")
                             else:
