@@ -20,7 +20,8 @@ Base = declarative_base()
 
 class Record(Base):
     __tablename__ = 'records'
-    Time = Column(DateTime, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    Time = Column(DateTime, nullable=False)
     IP = Column(String(15))
     Model = Column(String(50))
     # --- 新增字段 ---
