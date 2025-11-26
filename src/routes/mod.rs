@@ -1,10 +1,11 @@
-use crate::{handlers::audio_handler, state::app_state::AppState};
+use crate::state::app_state::AppState;
 use axum::{
     routing::{get, post},
     Router,
 };
 use std::sync::Arc;
 
+pub mod audio;
 pub mod chat;
 pub mod completions;
 pub mod general;
@@ -45,11 +46,11 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         )
         .route(
             "/v1/audio/transcriptions",
-            post(audio_handler::handle_audio_transcription),
+            post(audio::handle_audio_transcription),
         )
         .route(
             "/v1/audio/translations",
-            post(audio_handler::handle_audio_translation),
+            post(audio::handle_audio_translation),
         )
         .with_state(app_state)
 }

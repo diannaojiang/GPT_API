@@ -20,7 +20,6 @@ pub async fn handle_audio_transcription(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Response {
-    info!("Handling audio transcription request");
     handle_audio_request(
         app_state,
         headers,
@@ -35,7 +34,6 @@ pub async fn handle_audio_translation(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Response {
-    info!("Handling audio translation request");
     handle_audio_request(
         app_state,
         headers,
