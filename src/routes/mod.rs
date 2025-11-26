@@ -8,7 +8,8 @@ use std::sync::Arc;
 pub mod audio;
 pub mod chat;
 pub mod completions;
-pub mod general;
+pub mod embeddings;
+pub mod extras;
 pub mod health;
 pub mod models;
 
@@ -26,23 +27,23 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         )
         .route(
             "/v1/embeddings",
-            get(general::handle_embeddings).post(general::handle_embeddings),
+            get(embeddings::handle_embeddings).post(embeddings::handle_embeddings),
         )
         .route(
             "/v1/rerank",
-            get(general::handle_rerank).post(general::handle_rerank),
+            get(extras::handle_rerank).post(extras::handle_rerank),
         )
         .route(
             "/rerank",
-            get(general::handle_rerank).post(general::handle_rerank),
+            get(extras::handle_rerank).post(extras::handle_rerank),
         )
         .route(
             "/score",
-            get(general::handle_score).post(general::handle_score),
+            get(extras::handle_score).post(extras::handle_score),
         )
         .route(
             "/classify",
-            get(general::handle_classify).post(general::handle_classify),
+            get(extras::handle_classify).post(extras::handle_classify),
         )
         .route(
             "/v1/audio/transcriptions",
