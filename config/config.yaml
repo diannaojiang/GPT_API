@@ -1,0 +1,113 @@
+check_config:
+  enabled: false
+  endpoint: http://127.0.0.1:3000/health
+  interval: 30
+
+openai_clients:
+  # == For Basic Tests ==
+  - name: "mock_gpt_service"
+    api_key: "dummy-key-basic"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "keyword"
+      value: ["gpt", "test-exact-model", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-turbo-preview"]
+
+  # == For Fallback Test ==
+  - name: "failing_service"
+    api_key: "dummy-key-fail"
+    base_url: "http://127.0.0.1:9999/v1"
+    model_match:
+      type: "exact"
+      value: ["test-fallback-model"]
+    fallback: "deepseek-chat-for-fallback"
+  - name: "fallback_target_service"
+    api_key: "dummy-key-fallback-target"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["deepseek-chat-for-fallback"]
+
+  # == For API Key Tests ==
+  - name: "key_test_with_config_key"
+    api_key: "key-from-config-file"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-config-key"]
+  
+  - name: "key_test_without_config_key"
+    api_key: "" # Must be present, but can be empty
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-no-key", "model-for-input-key"]
+
+  # == For Priority Test ==
+  - name: "priority_test_high"
+    api_key: "dummy-key-prio-high"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-priority"]
+    priority: 1 # Higher priority
+    headers:
+      "X-Test-Client-Identifier": "high_priority_client"
+  
+  - name: "priority_test_low"
+    api_key: "dummy-key-prio-low"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-priority"]
+    priority: 10 # Lower priority
+    headers:
+      "X-Test-Client-Identifier": "low_priority_client"
+
+  # == For Special Parameter Tests ==
+  - name: "special_params_tester"
+    api_key: "dummy-key-special"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-special-params"]
+    special_prefix: "<PREFIX>\n"
+    stop: ["<STOP1>", "<STOP2>"]
+
+  # == For Max Tokens Test ==
+  - name: "max_tokens_tester"
+    api_key: "dummy-key-max-tokens"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-max-tokens-test"]
+    max_tokens: 1024
+
+  # == For Think Tag Removal Test ==
+  - name: "think_tag_removal_tester"
+    api_key: "dummy-key-think-tag"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-think-tag-removal-test"]
+
+  # == For Empty Message Test ==
+  - name: "empty_message_tester"
+    api_key: "dummy-key-empty-message"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-empty-message-test"]
+
+  # == For Multimodal Logging Test ==
+  - name: "multimodal_tester"
+    api_key: "dummy-key-multimodal"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["gpt-4-vision-preview"]
+    
+performance_test:
+  target_url: "http://127.0.0.1:8000/v1/chat/completions"  # Rust app listens on port 8000
+  num_requests: 100
+  concurrency: 10
+  request_timeout: 10

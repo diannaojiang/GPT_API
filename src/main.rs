@@ -1,0 +1,75 @@
+use axum::{extract::State, middleware};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tracing_subscriber::{self, EnvFilter};
+
+mod client;
+mod config;
+mod db;
+mod handlers;
+mod models;
+mod routes;
+mod state; // Add this // Add this back in
+
+use crate::db::{check_and_rotate, init_db_pool};
+use client::client_manager::ClientManager;
+use state::app_state::AppState;
+
+async fn rotation_middleware(
+    State(state): State<Arc<AppState>>,
+    request: axum::http::Request<axum::body::Body>,
+    next: middleware::Next,
+) -> axum::response::Response {
+    check_and_rotate(&state).await;
+    next.run(request).await
+}
+
+fn main() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(128)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        // Initialize tracing
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .init();
+
+        // Load configuration
+        let config_manager = config::config_manager::ConfigManager::new("config/config.yaml")
+            .await
+            .expect("Failed to load configuration");
+
+        let config_manager = Arc::new(config_manager);
+
+        // Initialize client manager
+        let client_manager = Arc::new(ClientManager::new());
+        let config = config_manager.get_config().await;
+
+        // Initialize database pool
+        let db_pool = init_db_pool(&config)
+            .await
+            .expect("Failed to initialize database pool");
+
+        let app_state = Arc::new(AppState::new(config_manager, client_manager, db_pool));
+
+        // Add a small delay to ensure the database is fully initialized on disk
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let app = routes::create_router(app_state.clone()).layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            rotation_middleware,
+        ));
+
+        // Run our app with hyper, listening globally on port 8000
+        let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
+        let listener = TcpListener::bind(addr).await.unwrap();
+        tracing::info!("listening on {}", addr);
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+}

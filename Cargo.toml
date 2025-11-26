@@ -1,0 +1,23 @@
+[package]
+name = "gpt_api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+notify = "6.1"
+validator = { version = "0.16", features = ["derive"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"] }
+tokio-stream = "0.1.17"
+futures = "0.3.31"
+rand = { version = "0.8.5", features = ["std_rng"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.5"
+tracing-appender = "0.2.3"
