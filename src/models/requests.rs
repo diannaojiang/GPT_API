@@ -25,6 +25,10 @@ pub enum MessageContent {
 pub enum RequestPayload {
     Chat(ChatCompletionRequest),
     Completion(CompletionRequest),
+    Embedding(EmbeddingRequest),
+    Rerank(RerankRequest),
+    Score(ScoreRequest),
+    Classify(ClassifyRequest),
 }
 
 impl RequestPayload {
@@ -32,6 +36,10 @@ impl RequestPayload {
         match self {
             RequestPayload::Chat(p) => &p.model,
             RequestPayload::Completion(p) => &p.model,
+            RequestPayload::Embedding(p) => &p.model,
+            RequestPayload::Rerank(p) => &p.model,
+            RequestPayload::Score(p) => &p.model,
+            RequestPayload::Classify(p) => &p.model,
         }
     }
 
@@ -39,6 +47,10 @@ impl RequestPayload {
         match self {
             RequestPayload::Chat(p) => p.model = model_name,
             RequestPayload::Completion(p) => p.model = model_name,
+            RequestPayload::Embedding(p) => p.model = model_name,
+            RequestPayload::Rerank(p) => p.model = model_name,
+            RequestPayload::Score(p) => p.model = model_name,
+            RequestPayload::Classify(p) => p.model = model_name,
         }
     }
 
@@ -46,6 +58,8 @@ impl RequestPayload {
         match self {
             RequestPayload::Chat(p) => p.stream.unwrap_or(false),
             RequestPayload::Completion(p) => p.stream.unwrap_or(false),
+            // 其他类型暂时不支持流式
+            _ => false,
         }
     }
 }

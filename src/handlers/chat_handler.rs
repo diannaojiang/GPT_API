@@ -96,11 +96,15 @@ async fn dispatch_request(
     headers: &HeaderMap,
     payload: &RequestPayload,
     client_config: &ClientConfig,
-) -> Result<Response, Box<dyn std::error::Error>> {
+) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     // 1. 根据请求类型确定 API 端点
     let (endpoint_path, is_chat) = match payload {
         RequestPayload::Chat(_) => ("chat/completions", true),
         RequestPayload::Completion(_) => ("completions", false),
+        RequestPayload::Embedding(_) => ("embeddings", false),
+        RequestPayload::Rerank(_) => ("rerank", false),
+        RequestPayload::Score(_) => ("score", false),
+        RequestPayload::Classify(_) => ("classify", false),
     };
     let url = format!(
         "{}/{}",
@@ -140,7 +144,7 @@ async fn process_non_streaming_response(
     client_config: &ClientConfig,
     request_body: &Value,
     response: reqwest::Response,
-) -> Result<Response, Box<dyn std::error::Error>> {
+) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     let mut response_body: Value = response.json().await?;
 
     if let Some(special_prefix) = &client_config.special_prefix {
@@ -177,7 +181,7 @@ async fn process_streaming_response(
     response: reqwest::Response,
     client_config: &ClientConfig,
     is_chat: bool,
-) -> Result<Response, Box<dyn std::error::Error>> {
+) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
@@ -219,7 +223,8 @@ async fn process_streaming_response(
                 } else {
                     event = event.data(data_str.to_string()); // 保留原始数据以防 JSON 解析失败
                 }
-            } else {
+            }
+            else {
                 event = event.data(line);
             }
             Ok::<axum::response::sse::Event, Infallible>(event)

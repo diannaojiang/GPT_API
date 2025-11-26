@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use reqwest::multipart::Form;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing;
@@ -37,7 +38,7 @@ pub async fn build_and_send_request(
     api_key: &str,
     url: &str,
     request_body: &Value,
-) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let http_client = app_state.client_manager.get_client();
 
     let response = http_client
@@ -45,6 +46,38 @@ pub async fn build_and_send_request(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(request_body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        tracing::error!(
+            "Backend request failed with status: {}, body: {}",
+            status,
+            error_body
+        );
+        return Err(format!("Backend request failed with status: {}", status).into());
+    }
+
+    Ok(response)
+}
+
+pub async fn build_and_send_request_multipart(
+    app_state: &Arc<AppState>,
+    api_key: &str,
+    url: &str,
+    form: Form,
+) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
+    let http_client = app_state.client_manager.get_client();
+
+    let response = http_client
+        .post(url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .multipart(form)
         .send()
         .await?;
 

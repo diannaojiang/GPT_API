@@ -122,50 +122,63 @@ pub fn adjust_max_tokens(
     }
 }
 
-/// 通用函数：为 `chat` 和 `completion` 请求构建请求体
+/// 通用函数：为各种请求类型构建请求体
 pub fn build_request_body_generic(
     payload: &RequestPayload,
     client_config: &ClientConfig,
     stream: bool,
 ) -> Value {
-    let (max_tokens_payload, temp_payload, stop_payload) = match payload {
-        RequestPayload::Chat(p) => (p.max_tokens, p.temperature, p.stop.clone()),
-        RequestPayload::Completion(p) => (p.max_tokens, p.temperature, p.stop.clone()),
-    };
-
-    let adjusted_max_tokens = adjust_max_tokens(client_config.max_tokens, max_tokens_payload);
-    let merged_stop = merge_stop_words(client_config.stop.as_ref(), stop_payload);
-
-    let mut request_body = json!({
-        "model": payload.get_model(),
-        "stream": stream,
-    });
-
-    // 添加可选参数
-    if let Some(temp) = temp_payload {
-        request_body["temperature"] = json!(temp);
-    }
-    if let Some(tokens) = adjusted_max_tokens {
-        request_body["max_tokens"] = json!(tokens);
-    }
-    if let Some(stop) = merged_stop {
-        request_body["stop"] = json!(stop);
-    }
-
-    // 添加特定于请求类型的参数
     match payload {
         RequestPayload::Chat(p) => {
-            request_body["messages"] = json!(&p.messages);
-            if let Some(tools) = &p.tools {
-                request_body["tools"] = tools.clone();
+            let adjusted_max_tokens = adjust_max_tokens(client_config.max_tokens, p.max_tokens);
+            let merged_stop = merge_stop_words(client_config.stop.as_ref(), p.stop.clone());
+
+            let mut body = json!({
+                "model": p.model,
+                "messages": p.messages,
+                "stream": stream,
+            });
+
+            if let Some(temp) = p.temperature {
+                body["temperature"] = json!(temp);
             }
+            if let Some(tokens) = adjusted_max_tokens {
+                body["max_tokens"] = json!(tokens);
+            }
+            if let Some(stop) = merged_stop {
+                body["stop"] = json!(stop);
+            }
+            if let Some(tools) = &p.tools {
+                body["tools"] = tools.clone();
+            }
+            body
         }
         RequestPayload::Completion(p) => {
-            request_body["prompt"] = json!(&p.prompt);
-        }
-    }
+            let adjusted_max_tokens = adjust_max_tokens(client_config.max_tokens, p.max_tokens);
+            let merged_stop = merge_stop_words(client_config.stop.as_ref(), p.stop.clone());
 
-    request_body
+            let mut body = json!({
+                "model": p.model,
+                "prompt": p.prompt,
+                "stream": stream,
+            });
+
+            if let Some(temp) = p.temperature {
+                body["temperature"] = json!(temp);
+            }
+            if let Some(tokens) = adjusted_max_tokens {
+                body["max_tokens"] = json!(tokens);
+            }
+            if let Some(stop) = merged_stop {
+                body["stop"] = json!(stop);
+            }
+            body
+        }
+        RequestPayload::Embedding(p) => serde_json::to_value(p).unwrap_or(json!({})),
+        RequestPayload::Rerank(p) => serde_json::to_value(p).unwrap_or(json!({})),
+        RequestPayload::Score(p) => serde_json::to_value(p).unwrap_or(json!({})),
+        RequestPayload::Classify(p) => serde_json::to_value(p).unwrap_or(json!({})),
+    }
 }
 
 /// 通用函数：为非流式响应的 JSON 体添加特殊前缀

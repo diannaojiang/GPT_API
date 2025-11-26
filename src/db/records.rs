@@ -100,6 +100,10 @@ pub async fn log_non_streaming_request(
     let request_type = match payload {
         RequestPayload::Chat(_) => "chat.completions",
         RequestPayload::Completion(_) => "text_completion",
+        RequestPayload::Embedding(_) => "embeddings",
+        RequestPayload::Rerank(_) => "rerank",
+        RequestPayload::Score(_) => "score",
+        RequestPayload::Classify(_) => "classify",
     };
 
     let tool_used = request_body.get("tools").is_some();
