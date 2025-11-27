@@ -88,7 +88,7 @@ docker run -d \
   -v $(pwd)/logs:/app/logs \
   -e OPENAI_API_KEY="sk-your-key-here" \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b48
+  ghcr.io/diannaojiang/openai-api:b53
 ```
 
 ## 🛠️ 本地构建与开发
