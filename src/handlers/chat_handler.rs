@@ -223,8 +223,7 @@ async fn process_streaming_response(
                 } else {
                     event = event.data(data_str.to_string()); // 保留原始数据以防 JSON 解析失败
                 }
-            }
-            else {
+            } else {
                 event = event.data(line);
             }
             Ok::<axum::response::sse::Event, Infallible>(event)

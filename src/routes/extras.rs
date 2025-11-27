@@ -4,9 +4,7 @@ use tracing::info;
 
 use crate::{
     handlers::chat_handler::handle_request_logic,
-    models::requests::{
-        ClassifyRequest, RequestPayload, RerankRequest, ScoreRequest,
-    },
+    models::requests::{ClassifyRequest, RequestPayload, RerankRequest, ScoreRequest},
     state::app_state::AppState,
 };
 

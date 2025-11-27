@@ -20,13 +20,7 @@ pub async fn handle_audio_transcription(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Response {
-    handle_audio_request(
-        app_state,
-        headers,
-        multipart,
-        "audio/transcriptions",
-    )
-    .await
+    handle_audio_request(app_state, headers, multipart, "audio/transcriptions").await
 }
 
 pub async fn handle_audio_translation(
@@ -34,13 +28,7 @@ pub async fn handle_audio_translation(
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Response {
-    handle_audio_request(
-        app_state,
-        headers,
-        multipart,
-        "audio/translations",
-    )
-    .await
+    handle_audio_request(app_state, headers, multipart, "audio/translations").await
 }
 
 // 用于在内存中缓存 Multipart 数据的结构体
@@ -157,13 +145,13 @@ async fn handle_audio_request(
                                 .into_response();
                         }
                     };
-                    
+
                     let mut response = bytes.into_response();
                     *response.status_mut() = status;
                     if let Some(ct) = headers.get("content-type") {
                         response.headers_mut().insert("content-type", ct.clone());
                     }
-                    
+
                     return response;
                 }
                 Err(e) => {
