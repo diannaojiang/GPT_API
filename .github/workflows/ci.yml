@@ -43,7 +43,15 @@ jobs:
     name: Build and Push Docker Image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check-and-test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -59,9 +67,6 @@ jobs:
       - name: Set owner to lowercase
         run: echo "OWNER_LC=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -72,15 +77,75 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ env.OWNER_LC }}/openai-api:b${{ env.COUNT }}
-            ghcr.io/${{ env.OWNER_LC }}/openai-api:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ env.OWNER_LC }}/openai-api,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.runner }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-docker-manifest:
+    name: Merge Docker Manifests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Commit Count
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set env vars
+        run: |
+          echo "COUNT=$(git rev-list --count HEAD)" >> $GITHUB_ENV
+          echo "OWNER_LC=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ env.OWNER_LC }}/openai-api:b${{ env.COUNT }} \
+            -t ghcr.io/${{ env.OWNER_LC }}/openai-api:latest \
+            $(printf 'ghcr.io/${{ env.OWNER_LC }}/openai-api@sha256:%s ' *)
+      
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ env.OWNER_LC }}/openai-api:latest
