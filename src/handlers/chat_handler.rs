@@ -21,8 +21,8 @@ use crate::{
     db::check_and_rotate,
     db::records::log_non_streaming_request,
     handlers::utils::{
-        apply_prefix_to_json, build_request_body_generic, filter_empty_messages, process_messages,
-        remove_think_tags,
+        apply_prefix_to_json, build_request_body_generic, filter_empty_messages, get_client_ip,
+        process_messages, remove_think_tags,
     },
     models::requests::RequestPayload,
     state::app_state::AppState,
@@ -53,10 +53,15 @@ pub async fn handle_request_logic(
         let matching_clients = select_clients_by_weight(matching_clients);
 
         if matching_clients.is_empty() {
-            error!("No matching clients found for model: {}", current_model);
-            let err_msg =
-                json!({ "error": format!("The model `{}` does not exist.", current_model) });
-            return (StatusCode::NOT_FOUND, Json(err_msg)).into_response();
+            let err_msg_str = format!("The model `{}` does not exist.", current_model);
+            let err_msg = json!({ "error": err_msg_str });
+            
+            let mut response = (StatusCode::NOT_FOUND, Json(err_msg)).into_response();
+            response.extensions_mut().insert(AccessLogMeta {
+                model: current_model.clone(),
+                error: Some("No matching clients found".to_string()),
+            });
+            return response;
         }
 
         let mut fallback_triggered = false;
@@ -65,9 +70,16 @@ pub async fn handle_request_logic(
             let result = dispatch_request(&app_state, &headers, &payload, &client_config).await;
 
             match result {
-                Ok(resp) => return resp,
+                Ok(mut resp) => {
+                    // 注入模型信息供日志中间件使用
+                    resp.extensions_mut().insert(AccessLogMeta {
+                        model: current_model.clone(),
+                        error: None,
+                    });
+                    return resp;
+                }
                 Err(e) => {
-                    error!(
+                    debug!(
                         "Failed to process request with client {}: {:?}",
                         client_config.name, e
                     );
@@ -85,7 +97,13 @@ pub async fn handle_request_logic(
             // 如果尝试了所有客户端都失败了，并且没有触发后备，则返回错误
             let err_msg =
                 json!({ "error": "All upstream providers failed for the requested model." });
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
+            
+            let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
+            response.extensions_mut().insert(AccessLogMeta {
+                model: current_model.clone(),
+                error: Some("All upstream providers failed".to_string()),
+            });
+            return response;
         }
     }
 }

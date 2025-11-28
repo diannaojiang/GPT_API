@@ -1,9 +1,10 @@
+use crate::handlers::utils::get_client_ip;
 use chrono::Utc;
 
 use axum::http::HeaderMap;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     models::requests::{MessageContent, RequestPayload},
@@ -64,11 +65,7 @@ pub async fn log_non_streaming_request(
     request_body: &Value,
     response_body: &Value,
 ) {
-    let client_ip = headers
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
+    let client_ip = get_client_ip(headers);
 
     let headers_json = serde_json::to_string(
         &headers
@@ -122,7 +119,7 @@ pub async fn log_non_streaming_request(
 
     let record = Record {
         time: Utc::now().to_rfc3339(),
-        ip: client_ip,
+        ip: client_ip.clone(),
         model: payload.get_model().to_string(),
         r#type: request_type.to_string(),
         completion_tokens: completion_tokens.try_into().unwrap_or_default(),

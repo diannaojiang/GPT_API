@@ -8,6 +8,7 @@ mod client;
 mod config;
 mod db;
 mod handlers;
+mod middleware; // Add this
 mod models;
 mod routes;
 mod state; // Add this // Add this back in
@@ -34,9 +35,9 @@ fn main() {
 
     runtime.block_on(async {
         // Initialize tracing
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .init();
+        // 配置自定义的日志系统 (File + Console)
+        let log_config = crate::logging::LogConfig::default();
+        let _guards = crate::logging::init_logging(log_config);
 
         // Load configuration
         let config_manager = config::config_manager::ConfigManager::new("config/config.yaml")
@@ -59,10 +60,14 @@ fn main() {
         // Add a small delay to ensure the database is fully initialized on disk
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let app = routes::create_router(app_state.clone()).layer(middleware::from_fn_with_state(
-            app_state.clone(),
-            rotation_middleware,
-        ));
+        let app = routes::create_router(app_state.clone())
+            .layer(middleware::from_fn_with_state(
+                app_state.clone(),
+                rotation_middleware,
+            ))
+            .layer(middleware::from_fn(
+                middleware::access_log::access_log_middleware,
+            )); // Access Log 最外层
 
         // Run our app with hyper, listening globally on port 8000
         let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
