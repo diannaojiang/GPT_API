@@ -1,3 +1,4 @@
+use crate::middleware::access_log::AccessLogMeta;
 use crate::client::routing::select_clients_by_weight;
 use axum::{
     extract::State,
@@ -13,7 +14,7 @@ use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, info};
 
 use crate::{
     client::proxy::{build_and_send_request, get_api_key},

@@ -4,11 +4,11 @@ use chrono::Local;
 use axum::http::HeaderMap;
 use serde_json::Value;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     models::requests::{MessageContent, RequestPayload},
-    state::app_state::AppState;
+    state::app_state::AppState,
 };
 
 /// 数据库记录结构
