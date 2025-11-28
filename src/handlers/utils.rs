@@ -7,11 +7,24 @@ use axum::http::HeaderMap;
 
 /// 从请求头中提取客户端 IP
 pub fn get_client_ip(headers: &HeaderMap) -> String {
-    headers
-        .get("X-Forwarded-For")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+    if let Some(xff) = headers.get("x-forwarded-for") {
+        if let Ok(xff_str) = xff.to_str() {
+            return xff_str
+                .split(',')
+                .next()
+                .unwrap_or(xff_str)
+                .trim()
+                .to_string();
+        }
+    }
+
+    if let Some(xri) = headers.get("x-real-ip") {
+        if let Ok(xri_str) = xri.to_str() {
+            return xri_str.trim().to_string();
+        }
+    }
+
+    "unknown".to_string()
 }
 
 /// 处理消息：清理空白字符和合并连续的用户消息

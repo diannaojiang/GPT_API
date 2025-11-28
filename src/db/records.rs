@@ -1,5 +1,5 @@
 use crate::handlers::utils::get_client_ip;
-use chrono::Utc;
+use chrono::Local;
 
 use axum::http::HeaderMap;
 use serde_json::Value;
@@ -8,7 +8,7 @@ use tracing::{error, info};
 
 use crate::{
     models::requests::{MessageContent, RequestPayload},
-    state::app_state::AppState,
+    state::app_state::AppState;
 };
 
 /// 数据库记录结构
@@ -118,7 +118,7 @@ pub async fn log_non_streaming_request(
     };
 
     let record = Record {
-        time: Utc::now().to_rfc3339(),
+        time: Local::now().format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
         ip: client_ip.clone(),
         model: payload.get_model().to_string(),
         r#type: request_type.to_string(),
