@@ -3,6 +3,17 @@ use crate::models::requests::{Message, MessageContent, RequestPayload};
 use regex::Regex;
 use serde_json::{json, Value};
 
+use axum::http::HeaderMap;
+
+/// 从请求头中提取客户端 IP
+pub fn get_client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("X-Forwarded-For")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// 处理消息：清理空白字符和合并连续的用户消息
 pub fn process_messages(messages: Vec<Message>) -> Vec<Message> {
     if messages.is_empty() {

@@ -86,7 +86,6 @@ docker run -d \
   -p 8000:8000 \
   -v $(pwd)/config/config.yaml:/app/config/config.yaml \
   -v $(pwd)/logs:/app/logs \
-  -e OPENAI_API_KEY="sk-your-key-here" \
   --restart always \
   ghcr.io/diannaojiang/openai-api:b63
 ```

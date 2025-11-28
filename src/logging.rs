@@ -32,10 +32,10 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
     let mut guards = Vec::new();
 
     // 创建通用日志的非阻塞写入器（INFO, WARNING等）
-    // 使用每日轮转作为折衷方案，因为tracing-appender不支持基于大小的轮转
+    // 使用每日轮转
     let general_file_appender = RollingFileAppender::builder()
-        .rotation(Rotation::DAILY) // 每日轮转
-        .filename_prefix("openai-api")
+        .rotation(Rotation::DAILY)
+        .filename_prefix("info") // 改为 info
         .filename_suffix("log")
         .max_log_files(config.general_log_retention_days)
         .build(&config.log_dir)
