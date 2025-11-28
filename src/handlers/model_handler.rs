@@ -17,10 +17,7 @@ async fn fetch_models_from_client(
     match http_client.get(&url).send().await {
         Ok(response) => {
             if response.status().is_success() {
-                match response.json::<Value>().await {
-                    Ok(models) => Some(models),
-                    Err(_) => None,
-                }
+                (response.json::<Value>().await).ok()
             } else {
                 None
             }

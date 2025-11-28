@@ -7,7 +7,7 @@ use tracing;
 use crate::{config::types::ClientConfig, state::app_state::AppState};
 
 /// 从配置或传递的 Header 中获取 API Key
-pub fn get_api_key<'a>(client_config: &ClientConfig, headers: &HeaderMap) -> String {
+pub fn get_api_key(client_config: &ClientConfig, headers: &HeaderMap) -> String {
     // 首先检查客户端配置中是否有 API Key
     if let Some(key) = &client_config.api_key {
         if !key.is_empty() {

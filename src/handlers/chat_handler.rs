@@ -206,7 +206,7 @@ async fn process_streaming_response(
             if line.starts_with("data:") {
                 let data_str = line.strip_prefix("data:").unwrap().trim();
                 if data_str == "[DONE]" {
-                    event = event.data("[DONE]".to_string());
+                    event = event.data("[DONE]");
                 } else if let Ok(mut value) = serde_json::from_str::<Value>(data_str) {
                     // 对第一个有效的消息块应用特殊前缀
                     if !prefix_applied && !special_prefix.is_empty() {
@@ -221,7 +221,7 @@ async fn process_streaming_response(
                     }
                     event = event.data(serde_json::to_string(&value).unwrap_or_default());
                 } else {
-                    event = event.data(data_str.to_string()); // 保留原始数据以防 JSON 解析失败
+                    event = event.data(data_str); // 保留原始数据以防 JSON 解析失败
                 }
             } else {
                 event = event.data(line);

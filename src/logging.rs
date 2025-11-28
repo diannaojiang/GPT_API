@@ -67,10 +67,7 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
         .with_ansi(false) // 在文件日志中禁用ANSI颜色
         .with_filter(filter::filter_fn(|meta| {
             // 只包含INFO, WARN, DEBUG级别（排除ERROR）
-            match meta.level().as_str() {
-                "ERROR" => false,
-                _ => true,
-            }
+            !matches!(meta.level().as_str(), "ERROR")
         }));
 
     let error_layer = fmt::layer()

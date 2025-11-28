@@ -6,6 +6,12 @@ pub struct ClientManager {
     client: Client,
 }
 
+impl Default for ClientManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClientManager {
     pub fn new() -> Self {
         let client = Client::builder()
