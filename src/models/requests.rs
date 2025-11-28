@@ -68,7 +68,12 @@ impl RequestPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
-    pub content: MessageContent,
+    #[serde(default)]
+    pub content: Option<MessageContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

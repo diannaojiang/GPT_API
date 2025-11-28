@@ -13,28 +13,33 @@ pub fn process_messages(messages: Vec<Message>) -> Vec<Message> {
 
     for mut msg in messages {
         // 1. 清理当前消息内容中的空白字符
-        let is_empty = match &mut msg.content {
-            MessageContent::String(content) => {
-                let trimmed = content.trim().to_string();
-                *content = trimmed;
-                content.is_empty()
-            }
-            MessageContent::Array(parts) => {
-                // For multimodal, we consider it non-empty if it has any parts.
-                // The actual text part trimming happens here too.
-                parts.iter_mut().for_each(|part| {
-                    if part.r#type == "text" {
-                        if let Some(text) = &mut part.text {
-                            *text = text.trim().to_string();
+        let is_empty = if let Some(content) = &mut msg.content {
+            match content {
+                MessageContent::String(c) => {
+                    let trimmed = c.trim().to_string();
+                    *c = trimmed;
+                    c.is_empty()
+                }
+                MessageContent::Array(parts) => {
+                    parts.iter_mut().for_each(|part| {
+                        if part.r#type == "text" {
+                            if let Some(text) = &mut part.text {
+                                *text = text.trim().to_string();
+                            }
                         }
-                    }
-                });
-                parts.is_empty()
+                    });
+                    parts.is_empty()
+                }
             }
+        } else {
+            // 如果 content 为 None，可能是 tool call，视为非空
+            false
         };
 
         // 2. 如果消息内容为空，则跳过
-        if is_empty {
+        // 注意：这里有一个隐患，如果 content 是 Some("") 且没有 tool_calls，它会被视为 Empty。
+        // 但如果 content 是 None (tool call)，它会被保留。
+        if is_empty && msg.tool_calls.is_none() {
             continue;
         }
 
@@ -57,9 +62,14 @@ pub fn filter_empty_messages(messages: Vec<Message>) -> Vec<Message> {
     messages
         .into_iter()
         .filter(|message| {
-            match &message.content {
-                MessageContent::String(content) => !content.trim().is_empty(),
-                MessageContent::Array(parts) => !parts.is_empty(), // Keep non-empty multimodal messages
+            if let Some(content) = &message.content {
+                match content {
+                    MessageContent::String(c) => !c.trim().is_empty(),
+                    MessageContent::Array(parts) => !parts.is_empty(),
+                }
+            } else {
+                // 如果 content 为 None，只有当 tool_calls 存在时才保留
+                message.tool_calls.is_some()
             }
         })
         .collect()
@@ -72,9 +82,9 @@ pub fn remove_think_tags(messages: Vec<Message>) -> Vec<Message> {
         .into_iter()
         .map(|mut message| {
             if message.role == "assistant" {
-                if let MessageContent::String(content) = message.content {
-                    let new_content = think_tag_re.replace_all(&content, "").to_string();
-                    message.content = MessageContent::String(new_content);
+                if let Some(MessageContent::String(content)) = &message.content {
+                    let new_content = think_tag_re.replace_all(content, "").to_string();
+                    message.content = Some(MessageContent::String(new_content));
                 }
             }
             message

@@ -110,7 +110,7 @@ pub async fn log_non_streaming_request(
 
     let is_multimodal = if let RequestPayload::Chat(p) = payload {
         p.messages.iter().any(|m| {
-            if let MessageContent::Array(content_array) = &m.content {
+            if let Some(MessageContent::Array(content_array)) = &m.content {
                 content_array.iter().any(|item| item.r#type == "image_url")
             } else {
                 false
