@@ -23,6 +23,9 @@ COPY config ./config
 # 确保日志目录存在
 RUN mkdir -p logs
 
+# 设置数据库路径环境变量
+ENV RECD_PATH="sqlite:./logs/record.db"
+
 # 暴露端口
 EXPOSE 8000
 
