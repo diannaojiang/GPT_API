@@ -109,14 +109,10 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
         }));
 
     // 3. System Layer: target!="access_log"
-    // 使用 EnvFilter 允许通过环境变量 RUST_LOG 控制日志级别 (默认 info)
-    let system_env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
+    // 不限制日志级别，记录所有系统日志 (Trace, Debug, Info, Warn, Error)
     let system_layer = fmt::layer()
         .with_writer(system_non_blocking)
         .with_ansi(false)
-        .with_filter(system_env_filter)
         .with_filter(filter::filter_fn(|meta| meta.target() != "access_log"));
 
     // 4. Console Layer: 全部显示 (保持默认行为，方便调试)
