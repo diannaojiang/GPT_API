@@ -17,10 +17,7 @@ pub struct AccessLogMeta {
     pub error: Option<String>,
 }
 
-pub async fn access_log_middleware(
-    req: Request<Body>,
-    next: Next,
-) -> Response {
+pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
 
     // 1. 提取请求信息
@@ -28,10 +25,10 @@ pub async fn access_log_middleware(
     let uri = req.uri().clone();
     let version = req.version();
     let headers = req.headers().clone();
-    
+
     // 提取 IP
     let client_ip = get_client_ip(&headers);
-    
+
     // 提取 User-Agent
     let user_agent = headers
         .get("user-agent")
@@ -58,7 +55,7 @@ pub async fn access_log_middleware(
     // 3. 提取响应信息
     let latency = start.elapsed();
     let status = response.status();
-    
+
     // 尝试获取 Content-Length (并不总是存在，尤其是流式响应)
     let body_bytes = response
         .headers()
@@ -79,7 +76,7 @@ pub async fn access_log_middleware(
     // 5. 构造 Nginx Combined 风格的日志字符串
     // 格式: IP - - [Time] "Method URI Version" Status Bytes "Referer" "UserAgent" Latency "Model" "ApiKey" "Error"
     let time_str = Utc::now().format("%d/%b/%Y:%H:%M:%S %z");
-    
+
     let log_line = format!(
         "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" \"{}\"",
         client_ip,

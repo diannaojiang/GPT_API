@@ -1,5 +1,5 @@
-use crate::middleware::access_log::AccessLogMeta;
 use crate::client::routing::select_clients_by_weight;
+use crate::middleware::access_log::AccessLogMeta;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -56,7 +56,7 @@ pub async fn handle_request_logic(
         if matching_clients.is_empty() {
             let err_msg_str = format!("The model `{}` does not exist.", current_model);
             let err_msg = json!({ "error": err_msg_str });
-            
+
             let mut response = (StatusCode::NOT_FOUND, Json(err_msg)).into_response();
             response.extensions_mut().insert(AccessLogMeta {
                 model: current_model.clone(),
@@ -98,7 +98,7 @@ pub async fn handle_request_logic(
             // 如果尝试了所有客户端都失败了，并且没有触发后备，则返回错误
             let err_msg =
                 json!({ "error": "All upstream providers failed for the requested model." });
-            
+
             let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
             response.extensions_mut().insert(AccessLogMeta {
                 model: current_model.clone(),
