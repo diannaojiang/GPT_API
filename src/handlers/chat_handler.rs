@@ -13,6 +13,7 @@ use futures::future;
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -33,6 +34,7 @@ use crate::{
 pub async fn handle_request_logic(
     State(app_state): State<Arc<AppState>>,
     headers: HeaderMap,
+    addr: Option<SocketAddr>,
     mut payload: RequestPayload,
 ) -> Response {
     // 对 Chat 请求，预处理 messages
@@ -68,7 +70,8 @@ pub async fn handle_request_logic(
         let mut fallback_triggered = false;
         for client_config in matching_clients {
             // 所有请求都通过这个统一的派发函数
-            let result = dispatch_request(&app_state, &headers, &payload, &client_config).await;
+            let result =
+                dispatch_request(&app_state, &headers, addr, &payload, &client_config).await;
 
             match result {
                 Ok(mut resp) => {
@@ -113,6 +116,7 @@ pub async fn handle_request_logic(
 async fn dispatch_request(
     app_state: &Arc<AppState>,
     headers: &HeaderMap,
+    addr: Option<SocketAddr>,
     payload: &RequestPayload,
     client_config: &ClientConfig,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
@@ -146,6 +150,7 @@ async fn dispatch_request(
         process_non_streaming_response(
             app_state,
             headers,
+            addr,
             payload,
             client_config,
             &request_body,
@@ -159,6 +164,7 @@ async fn dispatch_request(
 async fn process_non_streaming_response(
     app_state: &Arc<AppState>,
     headers: &HeaderMap,
+    addr: Option<SocketAddr>,
     payload: &RequestPayload,
     client_config: &ClientConfig,
     request_body: &Value,
@@ -180,6 +186,8 @@ async fn process_non_streaming_response(
     let payload_clone = payload.clone();
     let request_body_clone = request_body.clone();
     let response_body_clone = response_body.clone();
+    let client_ip = get_client_ip(headers, addr);
+
     tokio::spawn(async move {
         check_and_rotate(&app_state_clone).await;
         log_non_streaming_request(
@@ -188,6 +196,7 @@ async fn process_non_streaming_response(
             &payload_clone,
             &request_body_clone,
             &response_body_clone,
+            client_ip,
         )
         .await;
     });

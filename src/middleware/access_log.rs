@@ -1,10 +1,12 @@
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Request, StatusCode},
     middleware::Next,
     response::Response,
 };
 use chrono::Utc;
+use std::net::SocketAddr;
 use std::time::Instant;
 use tracing::{error, info};
 
@@ -27,7 +29,11 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     let headers = req.headers().clone();
 
     // 提取 IP
-    let client_ip = get_client_ip(&headers);
+    let addr = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0);
+    let client_ip = get_client_ip(&headers, addr);
 
     // 提取 User-Agent
     let user_agent = headers

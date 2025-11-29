@@ -2,11 +2,12 @@ use crate::config::types::ClientConfig;
 use crate::models::requests::{Message, MessageContent, RequestPayload};
 use regex::Regex;
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 
 use axum::http::HeaderMap;
 
 /// 从请求头中提取客户端 IP
-pub fn get_client_ip(headers: &HeaderMap) -> String {
+pub fn get_client_ip(headers: &HeaderMap, addr: Option<SocketAddr>) -> String {
     if let Some(xff) = headers.get("x-forwarded-for") {
         if let Ok(xff_str) = xff.to_str() {
             return xff_str
@@ -22,6 +23,10 @@ pub fn get_client_ip(headers: &HeaderMap) -> String {
         if let Ok(xri_str) = xri.to_str() {
             return xri_str.trim().to_string();
         }
+    }
+
+    if let Some(addr) = addr {
+        return addr.ip().to_string();
     }
 
     "unknown".to_string()

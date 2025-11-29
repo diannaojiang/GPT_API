@@ -1,4 +1,3 @@
-use crate::handlers::utils::get_client_ip;
 use chrono::Local;
 
 use axum::http::HeaderMap;
@@ -64,9 +63,8 @@ pub async fn log_non_streaming_request(
     payload: &RequestPayload,
     request_body: &Value,
     response_body: &Value,
+    client_ip: String,
 ) {
-    let client_ip = get_client_ip(headers);
-
     let headers_json = serde_json::to_string(
         &headers
             .iter()

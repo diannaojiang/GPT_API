@@ -75,8 +75,11 @@ fn main() {
         let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
         let listener = TcpListener::bind(addr).await.unwrap();
         tracing::info!("listening on {}", addr);
-        axum::serve(listener, app.into_make_service())
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 }

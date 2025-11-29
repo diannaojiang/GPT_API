@@ -1,4 +1,10 @@
-use axum::{extract::State, http::HeaderMap, response::Response, Json};
+use axum::{
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    response::Response,
+    Json,
+};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
@@ -11,26 +17,41 @@ use crate::{
 pub async fn handle_rerank(
     state: State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     payload: Json<RerankRequest>,
 ) -> Response {
     info!("Handling rerank request for model: {}", payload.model);
-    handle_request_logic(state, headers, RequestPayload::Rerank(payload.0)).await
+    handle_request_logic(
+        state,
+        headers,
+        Some(addr),
+        RequestPayload::Rerank(payload.0),
+    )
+    .await
 }
 
 pub async fn handle_score(
     state: State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     payload: Json<ScoreRequest>,
 ) -> Response {
     info!("Handling score request for model: {}", payload.model);
-    handle_request_logic(state, headers, RequestPayload::Score(payload.0)).await
+    handle_request_logic(state, headers, Some(addr), RequestPayload::Score(payload.0)).await
 }
 
 pub async fn handle_classify(
     state: State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     payload: Json<ClassifyRequest>,
 ) -> Response {
     info!("Handling classify request for model: {}", payload.model);
-    handle_request_logic(state, headers, RequestPayload::Classify(payload.0)).await
+    handle_request_logic(
+        state,
+        headers,
+        Some(addr),
+        RequestPayload::Classify(payload.0),
+    )
+    .await
 }
