@@ -108,11 +108,14 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
             meta.target() == "access_log" && meta.level().as_str() == "ERROR"
         }));
 
-    // 3. System Layer: 记录所有日志 (包括 access_log 和系统内部日志)
-    // 不限制日志级别 (Trace ~ Error)
+    // 3. System Layer: 记录日志 (受 RUST_LOG 控制，默认 info)
+    let system_env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
     let system_layer = fmt::layer()
         .with_writer(system_non_blocking)
-        .with_ansi(false);
+        .with_ansi(false)
+        .with_filter(system_env_filter);
 
     // 4. Console Layer: 全部显示 (保持默认行为，方便调试)
     let console_layer = fmt::layer()
