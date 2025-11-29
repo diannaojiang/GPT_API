@@ -82,7 +82,7 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
             fmt::format()
                 .with_level(false)
                 .with_target(false)
-                .with_timestamp(false)
+                .without_time()
                 .with_file(false)
                 .with_line_number(false)
                 .compact(),
@@ -99,7 +99,7 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
             fmt::format()
                 .with_level(false)
                 .with_target(false)
-                .with_timestamp(false)
+                .without_time()
                 .with_file(false)
                 .with_line_number(false)
                 .compact(),
