@@ -80,10 +80,15 @@ pub struct Message {
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Value>,
     // Add other fields as needed
 }
@@ -92,9 +97,13 @@ pub struct ChatCompletionRequest {
 pub struct CompletionRequest {
     pub model: String,
     pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
     // Add other fields as needed
 }
@@ -105,8 +114,11 @@ pub struct CompletionRequest {
 pub struct EmbeddingRequest {
     pub model: String,
     pub input: Value, // String or Vec<String> or Tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub encoding_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
 }
 
@@ -115,6 +127,7 @@ pub struct RerankRequest {
     pub model: String,
     pub query: String,
     pub documents: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_n: Option<usize>,
 }
 
