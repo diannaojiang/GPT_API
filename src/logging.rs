@@ -109,8 +109,8 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
         }));
 
     // 3. System Layer: 记录日志 (受 RUST_LOG 控制，默认 info)
-    let system_env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let system_env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let system_layer = fmt::layer()
         .with_writer(system_non_blocking)
