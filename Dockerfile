@@ -8,9 +8,17 @@ RUN cargo build --release
 # Runtime Stage
 FROM debian:bookworm-slim
 
+# 设置时区为 Asia/Shanghai
+ENV TZ=Asia/Shanghai
+
 # 安装必要的系统依赖
 # reqwest (使用 rustls) 通常不需要 OpenSSL 开发库，但 ca-certificates 是必须的
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+# 同时安装 tzdata 以支持时区设置
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
