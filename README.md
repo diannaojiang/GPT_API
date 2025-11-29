@@ -84,6 +84,7 @@ openai_clients:
 docker run -d \
   --name openai-api \
   -p 8000:8000 \
+  -e RUST_LOG=warn \
   -v $(pwd)/config/config.yaml:/app/config/config.yaml \
   -v $(pwd)/logs:/app/logs \
   --restart always \
