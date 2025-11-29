@@ -57,35 +57,75 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
     let (error_non_blocking, error_guard) = tracing_appender::non_blocking(error_file_appender);
     guards.push(error_guard);
 
+    // 创建 system 日志的非阻塞写入器
+    let system_file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("system")
+        .filename_suffix("log")
+        .max_log_files(config.general_log_retention_days)
+        .build(&config.log_dir)
+        .expect("Failed to create system log appender");
+
+    let (system_non_blocking, system_guard) = tracing_appender::non_blocking(system_file_appender);
+    guards.push(system_guard);
+
     // 创建控制台输出的非阻塞写入器
     let (console_non_blocking, console_guard) = tracing_appender::non_blocking(std::io::stdout());
     guards.push(console_guard);
 
-    // 为不同日志级别创建层
-    let general_layer = fmt::layer()
+    // 1. Access Info Layer: 仅 target="access_log" && level!=ERROR
+    // 使用自定义格式：只输出 message，不带任何 tracing 默认的修饰
+    let access_info_layer = fmt::layer()
         .with_writer(general_non_blocking)
-        .with_ansi(false) // 在文件日志中禁用ANSI颜色
+        .with_ansi(false)
+        .event_format(
+            fmt::format()
+                .with_level(false)
+                .with_target(false)
+                .with_timestamp(false)
+                .with_file(false)
+                .with_line_number(false)
+                .compact(),
+        )
         .with_filter(filter::filter_fn(|meta| {
-            // 只包含INFO, WARN, DEBUG级别（排除ERROR）
-            !matches!(meta.level().as_str(), "ERROR")
+            meta.target() == "access_log" && !matches!(meta.level().as_str(), "ERROR")
         }));
 
-    let error_layer = fmt::layer()
+    // 2. Access Error Layer: 仅 target="access_log" && level==ERROR
+    let access_error_layer = fmt::layer()
         .with_writer(error_non_blocking)
-        .with_ansi(false) // 在文件日志中禁用ANSI颜色
+        .with_ansi(false)
+        .event_format(
+            fmt::format()
+                .with_level(false)
+                .with_target(false)
+                .with_timestamp(false)
+                .with_file(false)
+                .with_line_number(false)
+                .compact(),
+        )
         .with_filter(filter::filter_fn(|meta| {
-            // 只包含ERROR级别
-            meta.level().as_str() == "ERROR"
+            meta.target() == "access_log" && meta.level().as_str() == "ERROR"
         }));
 
+    // 3. System Layer: target!="access_log"
+    let system_layer = fmt::layer()
+        .with_writer(system_non_blocking)
+        .with_ansi(false)
+        .with_filter(filter::filter_fn(|meta| {
+            meta.target() != "access_log"
+        }));
+
+    // 4. Console Layer: 全部显示 (保持默认行为，方便调试)
     let console_layer = fmt::layer()
         .with_writer(console_non_blocking)
         .with_filter(EnvFilter::from_default_env());
 
     // 构建订阅者
     tracing_subscriber::registry()
-        .with(general_layer)
-        .with(error_layer)
+        .with(access_info_layer)
+        .with(access_error_layer)
+        .with(system_layer)
         .with(console_layer)
         .init();
 

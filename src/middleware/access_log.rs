@@ -95,9 +95,9 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
 
     // 6. 根据状态码决定日志级别
     if status.is_server_error() || status.is_client_error() {
-        error!("{}", log_line);
+        error!(target: "access_log", "{}", log_line);
     } else {
-        info!("{}", log_line);
+        info!(target: "access_log", "{}", log_line);
     }
 
     response
