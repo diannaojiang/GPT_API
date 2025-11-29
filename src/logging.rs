@@ -108,12 +108,11 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
             meta.target() == "access_log" && meta.level().as_str() == "ERROR"
         }));
 
-    // 3. System Layer: target!="access_log"
-    // 不限制日志级别，记录所有系统日志 (Trace, Debug, Info, Warn, Error)
+    // 3. System Layer: 记录所有日志 (包括 access_log 和系统内部日志)
+    // 不限制日志级别 (Trace ~ Error)
     let system_layer = fmt::layer()
         .with_writer(system_non_blocking)
-        .with_ansi(false)
-        .with_filter(filter::filter_fn(|meta| meta.target() != "access_log"));
+        .with_ansi(false);
 
     // 4. Console Layer: 全部显示 (保持默认行为，方便调试)
     let console_layer = fmt::layer()
