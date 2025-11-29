@@ -112,9 +112,7 @@ pub fn init_logging(config: LogConfig) -> Vec<WorkerGuard> {
     let system_layer = fmt::layer()
         .with_writer(system_non_blocking)
         .with_ansi(false)
-        .with_filter(filter::filter_fn(|meta| {
-            meta.target() != "access_log"
-        }));
+        .with_filter(filter::filter_fn(|meta| meta.target() != "access_log"));
 
     // 4. Console Layer: 全部显示 (保持默认行为，方便调试)
     let console_layer = fmt::layer()
