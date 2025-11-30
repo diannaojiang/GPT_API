@@ -88,7 +88,7 @@ docker run -d \
   -v $(pwd)/config/config.yaml:/app/config/config.yaml \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b94
+  ghcr.io/diannaojiang/openai-api:b96
 ```
 
 ## 🛠️ 本地构建与开发
