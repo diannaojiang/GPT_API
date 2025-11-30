@@ -71,9 +71,9 @@ impl IntoResponse for AppError {
                 "database_error".to_string(),
             ),
             AppError::ClientNotFound(model) => (
-                StatusCode::NOT_FOUND,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 format!("The model `{}` does not exist.", model),
-                "invalid_request_error".to_string(),
+                "Input Validation Error".to_string(),
             ),
             AppError::UpstreamError(msg) => {
                 (StatusCode::BAD_GATEWAY, msg, "upstream_error".to_string())
