@@ -1,3 +1,4 @@
+use crate::middleware::access_log::AccessLogMeta;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -36,39 +37,74 @@ impl std::error::Error for AppError {}
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_message, error_type) = match self {
-            AppError::ReqwestError(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("External request failed: {}", err),
-                "ReqwestError".to_string(),
-            ),
+            AppError::ReqwestError(err) => {
+                if err.is_timeout() {
+                    (
+                        StatusCode::GATEWAY_TIMEOUT,
+                        format!("Request to upstream timed out: {}", err),
+                        "timeout_error".to_string(),
+                    )
+                } else if err.is_connect() {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        format!("Failed to connect to upstream: {}", err),
+                        "connection_error".to_string(),
+                    )
+                } else if let Some(status) = err.status() {
+                    // 如果上游返回了具体的 HTTP 错误状态码
+                    (
+                        status,
+                        format!("Upstream returned error: {}", err),
+                        "upstream_error".to_string(),
+                    )
+                } else {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("External request failed: {}", err),
+                        "internal_error".to_string(),
+                    )
+                }
+            }
             AppError::DatabaseError(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Database operation failed: {}", err),
-                "DatabaseError".to_string(),
+                "database_error".to_string(),
             ),
             AppError::ClientNotFound(model) => (
                 StatusCode::NOT_FOUND,
                 format!("The model `{}` does not exist.", model),
-                "NotFoundError".to_string(),
+                "invalid_request_error".to_string(),
             ),
-            AppError::UpstreamError(msg) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                msg,
-                "UpstreamError".to_string(),
-            ),
-            AppError::InvalidHeader(msg) => {
-                (StatusCode::BAD_REQUEST, msg, "InvalidHeader".to_string())
+            AppError::UpstreamError(msg) => {
+                (StatusCode::BAD_GATEWAY, msg, "upstream_error".to_string())
             }
+            AppError::InvalidHeader(msg) => (
+                StatusCode::BAD_REQUEST,
+                msg,
+                "invalid_request_error".to_string(),
+            ),
             AppError::InternalServerError(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 msg,
-                "InternalServerError".to_string(),
+                "internal_error".to_string(),
             ),
             AppError::ApiError(status, message, error_type) => (status, message, error_type),
         };
 
-        let body = Json(json!({ "error": error_message, "error_type": error_type }));
-        (status, body).into_response()
+        let body = Json(json!({
+            "error": error_message,
+            "error_type": error_type
+        }));
+
+        let mut response = (status, body).into_response();
+
+        // Inject error details for access logging
+        response.extensions_mut().insert(AccessLogMeta {
+            model: "-".to_string(), // Can't easily access model here, default to "-"
+            error: Some(error_message),
+        });
+
+        response
     }
 }
 
