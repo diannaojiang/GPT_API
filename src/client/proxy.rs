@@ -49,20 +49,7 @@ pub async fn build_and_send_request(
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        tracing::error!(
-            "Backend request failed with status: {}, body: {}",
-            status,
-            error_body
-        );
-        return Err(format!("Backend request failed with status: {}", status).into());
-    }
-
+    // Do not check status here, let the handler decide whether to fallback or return the error
     Ok(response)
 }
 
@@ -81,19 +68,6 @@ pub async fn build_and_send_request_multipart(
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        tracing::error!(
-            "Backend request failed with status: {}, body: {}",
-            status,
-            error_body
-        );
-        return Err(format!("Backend request failed with status: {}", status).into());
-    }
-
+    // Do not check status here
     Ok(response)
 }

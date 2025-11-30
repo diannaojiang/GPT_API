@@ -58,10 +58,10 @@ pub async fn handle_request_logic(
         if matching_clients.is_empty() {
             let err_msg = json!({
                 "error": format!("The model `{}` does not exist.", current_model),
-                "error_type": "invalid_request_error"
+                "error_type": "Input Validation Error"
             });
 
-            let mut response = (StatusCode::NOT_FOUND, Json(err_msg)).into_response();
+            let mut response = (StatusCode::UNPROCESSABLE_ENTITY, Json(err_msg)).into_response();
             response.extensions_mut().insert(AccessLogMeta {
                 model: current_model.clone(),
                 error: Some("No matching clients found".to_string()),
@@ -69,54 +69,113 @@ pub async fn handle_request_logic(
             return response;
         }
 
+        let mut last_response: Option<Response> = None;
         let mut fallback_triggered = false;
+
         for client_config in matching_clients {
             // 所有请求都通过这个统一的派发函数
+            // 注意：dispatch_request 现在即使上游返回 4xx/5xx 也会返回 Ok(Response)
             let result =
                 dispatch_request(&app_state, &headers, addr, &payload, &client_config).await;
 
             match result {
                 Ok(mut resp) => {
-                    // 注入模型信息供日志中间件使用
-                    resp.extensions_mut().insert(AccessLogMeta {
-                        model: current_model.clone(),
-                        error: None,
-                    });
-                    return resp;
+                    let status = resp.status();
+
+                    // 1. 成功 (2xx) -> 直接返回
+                    if status.is_success() {
+                        resp.extensions_mut().insert(AccessLogMeta {
+                            model: current_model.clone(),
+                            error: None,
+                        });
+                        return resp;
+                    }
+
+                    // 2. 客户端错误 (4xx) -> 认为是业务错误，不重试，直接透传
+                    if status.is_client_error() {
+                        // 注入 Log Meta (尝试从 Header 或状态推断，不读取 Body 以免消耗流)
+                        resp.extensions_mut().insert(AccessLogMeta {
+                            model: current_model.clone(),
+                            error: Some(format!("Upstream client error: {}", status)),
+                        });
+                        return resp;
+                    }
+
+                    // 3. 服务端错误 (5xx) -> 检查是否有 Fallback
+                    if status.is_server_error() {
+                        debug!(
+                            "Client {} failed with status {}. Checking fallback...",
+                            client_config.name, status
+                        );
+
+                        // 如果有后备模型，则触发后备逻辑
+                        if let Some(fallback_model) = &client_config.fallback {
+                            info!("Falling back to model: {}", fallback_model);
+                            current_model = fallback_model.clone();
+                            fallback_triggered = true;
+                            // 保存这次的错误响应，万一 fallback 也失败，至少能返回这个（或者返回 fallback 的失败）
+                            // 但由于我们要 break loop 重来，last_response 在这里赋值其实会被外层的 loop 覆盖。
+                            // 真正的逻辑是：break inner loop, continue outer loop.
+                            break;
+                        }
+
+                        // 如果没有后备，或者这就是最后一个尝试的 client，
+                        // 我们将这个响应保存为“最后一次失败”，继续尝试下一个 client (负载均衡/重试同模型)
+                        // 但目前逻辑是 `select_clients_by_weight` 返回的是列表，我们遍历列表。
+                        // 如果这个 client 失败且没 fallback，我们应该尝试列表中的下一个吗？
+                        // 通常负载均衡是选一个。这里 matching_clients 可能是多个（如果配置了多个同名模型）。
+                        // 假设我们尝试下一个同名模型的 client。
+                        last_response = Some(resp);
+                    }
                 }
                 Err(e) => {
+                    // 网络层错误（连接失败、超时等），由 reqwest 抛出
                     debug!(
                         "Failed to process request with client {}: {:?}",
                         client_config.name, e
                     );
+                    // 如果有 fallback，优先 fallback
                     if let Some(fallback_model) = &client_config.fallback {
                         info!("Falling back to model: {}", fallback_model);
                         current_model = fallback_model.clone();
                         fallback_triggered = true;
-                        break; // 跳出客户端循环，使用后备模型重新开始
+                        break;
                     }
+                    // 否则继续尝试下一个 client
                 }
             }
         }
 
-        if !fallback_triggered {
-            // 如果尝试了所有客户端都失败了，并且没有触发后备，则返回错误
-            let err_msg = json!({
-                "error": "All upstream providers failed for the requested model.",
-                "error_type": "upstream_error"
-            });
-
-            let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
-            response.extensions_mut().insert(AccessLogMeta {
-                model: current_model.clone(),
-                error: Some("All upstream providers failed".to_string()),
-            });
-            return response;
+        // 如果触发了 fallback，跳出当前 client 循环，使用新模型重新开始
+        if fallback_triggered {
+            continue;
         }
+
+        // 如果所有 client 都尝试过且失败了，返回最后一次的错误响应
+        if let Some(mut resp) = last_response {
+            resp.extensions_mut().insert(AccessLogMeta {
+                model: current_model.clone(),
+                error: Some("All upstream providers failed (forwarding last error)".to_string()),
+            });
+            return resp;
+        }
+
+        // 如果连 last_response 都没有（例如全是网络错误），返回通用错误
+        let err_msg = json!({
+            "error": "All upstream providers failed for the requested model.",
+            "error_type": "upstream_error"
+        });
+
+        let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
+        response.extensions_mut().insert(AccessLogMeta {
+            model: current_model.clone(),
+            error: Some("All upstream providers failed".to_string()),
+        });
+        return response;
     }
 }
 
-/// 统一的请求派发函数，替代了原有的 `dispatch_*` 和 `try_*` 系列函数
+/// 统一的请求派发函数
 async fn dispatch_request(
     app_state: &Arc<AppState>,
     headers: &HeaderMap,
@@ -124,7 +183,6 @@ async fn dispatch_request(
     payload: &RequestPayload,
     client_config: &ClientConfig,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    // 1. 根据请求类型确定 API 端点
     let (endpoint_path, is_chat) = match payload {
         RequestPayload::Chat(_) => ("chat/completions", true),
         RequestPayload::Completion(_) => ("completions", false),
@@ -140,14 +198,14 @@ async fn dispatch_request(
     );
     let api_key = get_api_key(client_config, headers);
 
-    // 2. 使用通用函数构建请求体
     let request_body = build_request_body_generic(payload, client_config, payload.is_streaming());
 
-    // 3. 发送请求
+    // 这里 build_and_send_request 现在返回 Ok(response) 即使状态码是 4xx/5xx
     let response =
         build_and_send_request(app_state, client_config, &api_key, &url, &request_body).await?;
 
-    // 4. 根据是否流式，调用不同的响应处理器
+    // 核心修改：检查是否应该进入流式处理
+    // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
     if payload.is_streaming() {
         process_streaming_response(response, client_config, is_chat).await
     } else {
@@ -208,17 +266,31 @@ async fn process_non_streaming_response(
     Ok(Json(response_body).into_response())
 }
 
-/// 处理流式响应，并转换为 SSE Stream
+// process_streaming_response 也需要修改以处理错误状态码
 async fn process_streaming_response(
     response: reqwest::Response,
     client_config: &ClientConfig,
     is_chat: bool,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    // 如果状态码不成功，直接作为普通 JSON 返回，不要包装成 SSE
+    if !response.status().is_success() {
+        let status = response.status();
+        // 尝试解析为 JSON，如果不是 JSON 则作为文本返回
+        // 这里我们尽力而为，目的是透传上游的 body
+        let body_bytes = response.bytes().await?;
+        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
+            json!({
+                "error": String::from_utf8_lossy(&body_bytes).to_string(),
+                "error_type": "upstream_error"
+            })
+        });
+        return Ok((status, Json(body_json)).into_response());
+    }
+
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
 
-    // 根据是否为聊天请求，确定要修改的 JSON 字段路径
     let content_json_pointer = if is_chat {
         "/choices/0/delta/content"
     } else {
@@ -240,7 +312,6 @@ async fn process_streaming_response(
                 if data_str == "[DONE]" {
                     event = event.data("[DONE]");
                 } else if let Ok(mut value) = serde_json::from_str::<Value>(data_str) {
-                    // 对第一个有效的消息块应用特殊前缀
                     if !prefix_applied && !special_prefix.is_empty() {
                         if let Some(delta_content) = value.pointer_mut(content_json_pointer) {
                             if let Some(s) = delta_content.as_str() {
@@ -253,7 +324,7 @@ async fn process_streaming_response(
                     }
                     event = event.data(serde_json::to_string(&value).unwrap_or_default());
                 } else {
-                    event = event.data(data_str); // 保留原始数据以防 JSON 解析失败
+                    event = event.data(data_str);
                 }
             } else {
                 event = event.data(line);
