@@ -64,7 +64,7 @@ pub async fn handle_request_logic(
             let mut response = (StatusCode::UNPROCESSABLE_ENTITY, Json(err_msg)).into_response();
             response.extensions_mut().insert(AccessLogMeta {
                 model: current_model.clone(),
-                error: Some("No matching clients found".to_string()),
+                error: Some(format!("The model `{}` does not exist.", current_model)),
             });
             return response;
         }
@@ -74,7 +74,6 @@ pub async fn handle_request_logic(
 
         for client_config in matching_clients {
             // 所有请求都通过这个统一的派发函数
-            // 注意：dispatch_request 现在即使上游返回 4xx/5xx 也会返回 Ok(Response)
             let result =
                 dispatch_request(&app_state, &headers, addr, &payload, &client_config).await;
 
@@ -93,11 +92,19 @@ pub async fn handle_request_logic(
 
                     // 2. 客户端错误 (4xx) -> 认为是业务错误，不重试，直接透传
                     if status.is_client_error() {
-                        // 注入 Log Meta (尝试从 Header 或状态推断，不读取 Body 以免消耗流)
-                        resp.extensions_mut().insert(AccessLogMeta {
-                            model: current_model.clone(),
-                            error: Some(format!("Upstream client error: {}", status)),
-                        });
+                        // 不要在这里注入 AccessLogMeta，因为下层函数已经注入了更详细的信息
+                        // 如果这里再次注入，会覆盖掉下层的详细信息
+                        // 但我们需要注入 model 信息，因为它在下层可能只是 "-"
+                        // 我们可以尝试获取已有的 meta，更新 model，然后再放回去
+                        if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
+                            meta.model = current_model.clone();
+                        } else {
+                            // 如果下层没注入（理论上不应该发生），补一个
+                            resp.extensions_mut().insert(AccessLogMeta {
+                                model: current_model.clone(),
+                                error: Some(format!("Upstream client error: {}", status)),
+                            });
+                        }
                         return resp;
                     }
 
@@ -108,59 +115,50 @@ pub async fn handle_request_logic(
                             client_config.name, status
                         );
 
-                        // 如果有后备模型，则触发后备逻辑
                         if let Some(fallback_model) = &client_config.fallback {
                             info!("Falling back to model: {}", fallback_model);
                             current_model = fallback_model.clone();
                             fallback_triggered = true;
-                            // 保存这次的错误响应，万一 fallback 也失败，至少能返回这个（或者返回 fallback 的失败）
-                            // 但由于我们要 break loop 重来，last_response 在这里赋值其实会被外层的 loop 覆盖。
-                            // 真正的逻辑是：break inner loop, continue outer loop.
                             break;
                         }
 
-                        // 如果没有后备，或者这就是最后一个尝试的 client，
-                        // 我们将这个响应保存为“最后一次失败”，继续尝试下一个 client (负载均衡/重试同模型)
-                        // 但目前逻辑是 `select_clients_by_weight` 返回的是列表，我们遍历列表。
-                        // 如果这个 client 失败且没 fallback，我们应该尝试列表中的下一个吗？
-                        // 通常负载均衡是选一个。这里 matching_clients 可能是多个（如果配置了多个同名模型）。
-                        // 假设我们尝试下一个同名模型的 client。
                         last_response = Some(resp);
                     }
                 }
                 Err(e) => {
-                    // 网络层错误（连接失败、超时等），由 reqwest 抛出
                     debug!(
                         "Failed to process request with client {}: {:?}",
                         client_config.name, e
                     );
-                    // 如果有 fallback，优先 fallback
                     if let Some(fallback_model) = &client_config.fallback {
                         info!("Falling back to model: {}", fallback_model);
                         current_model = fallback_model.clone();
                         fallback_triggered = true;
                         break;
                     }
-                    // 否则继续尝试下一个 client
                 }
             }
         }
 
-        // 如果触发了 fallback，跳出当前 client 循环，使用新模型重新开始
         if fallback_triggered {
             continue;
         }
 
-        // 如果所有 client 都尝试过且失败了，返回最后一次的错误响应
         if let Some(mut resp) = last_response {
-            resp.extensions_mut().insert(AccessLogMeta {
-                model: current_model.clone(),
-                error: Some("All upstream providers failed (forwarding last error)".to_string()),
-            });
+            // 同样，尝试更新 model 信息
+            if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
+                meta.model = current_model.clone();
+            } else {
+                resp.extensions_mut().insert(AccessLogMeta {
+                    model: current_model.clone(),
+                    error: Some(
+                        "All upstream providers failed (forwarding last error)".to_string(),
+                    ),
+                });
+            }
             return resp;
         }
 
-        // 如果连 last_response 都没有（例如全是网络错误），返回通用错误
         let err_msg = json!({
             "error": "All upstream providers failed for the requested model.",
             "error_type": "upstream_error"
@@ -232,51 +230,69 @@ async fn process_non_streaming_response(
     request_body: &Value,
     response: reqwest::Response,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    let status = response.status();
     let mut response_body: Value = response.json().await?;
 
-    if let Some(special_prefix) = &client_config.special_prefix {
-        apply_prefix_to_json(
-            &mut response_body,
-            special_prefix,
-            matches!(payload, RequestPayload::Chat(_)),
-        );
+    // 如果是错误响应，尝试提取错误信息并注入日志元数据
+    let error_msg = if !status.is_success() {
+        extract_error_msg(&response_body)
+    } else {
+        None
+    };
+
+    if status.is_success() {
+        if let Some(special_prefix) = &client_config.special_prefix {
+            apply_prefix_to_json(
+                &mut response_body,
+                special_prefix,
+                matches!(payload, RequestPayload::Chat(_)),
+            );
+        }
+
+        // 在记录日志前检查并轮换数据库
+        let app_state_clone = app_state.clone();
+        let headers_clone = headers.clone();
+        let payload_clone = payload.clone();
+        let request_body_clone = request_body.clone();
+        let response_body_clone = response_body.clone();
+        let client_ip = get_client_ip(headers, addr);
+
+        tokio::spawn(async move {
+            check_and_rotate(&app_state_clone).await;
+            log_non_streaming_request(
+                &app_state_clone,
+                &headers_clone,
+                &payload_clone,
+                &request_body_clone,
+                &response_body_clone,
+                client_ip,
+            )
+            .await;
+        });
     }
 
-    // 在记录日志前检查并轮换数据库
-    let app_state_clone = app_state.clone();
-    let headers_clone = headers.clone();
-    let payload_clone = payload.clone();
-    let request_body_clone = request_body.clone();
-    let response_body_clone = response_body.clone();
-    let client_ip = get_client_ip(headers, addr);
+    let mut resp = Json(response_body).into_response();
+    // 如果有状态码不一致（例如 Json 可能会默认 200，或者我们需要显式设置 status）， Axum 的 Json extractor 通常会设置 200。
+    // 我们需要手动把 reqwest 的 status 设置回去。
+    *resp.status_mut() = status;
 
-    tokio::spawn(async move {
-        check_and_rotate(&app_state_clone).await;
-        log_non_streaming_request(
-            &app_state_clone,
-            &headers_clone,
-            &payload_clone,
-            &request_body_clone,
-            &response_body_clone,
-            client_ip,
-        )
-        .await;
-    });
+    if let Some(msg) = error_msg {
+        resp.extensions_mut().insert(AccessLogMeta {
+            model: "-".to_string(), // Placeholder, will be updated by handle_request_logic
+            error: Some(msg),
+        });
+    }
 
-    Ok(Json(response_body).into_response())
+    Ok(resp)
 }
 
-// process_streaming_response 也需要修改以处理错误状态码
 async fn process_streaming_response(
     response: reqwest::Response,
     client_config: &ClientConfig,
     is_chat: bool,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    // 如果状态码不成功，直接作为普通 JSON 返回，不要包装成 SSE
     if !response.status().is_success() {
         let status = response.status();
-        // 尝试解析为 JSON，如果不是 JSON 则作为文本返回
-        // 这里我们尽力而为，目的是透传上游的 body
         let body_bytes = response.bytes().await?;
         let body_json: Value = serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
             json!({
@@ -284,9 +300,22 @@ async fn process_streaming_response(
                 "error_type": "upstream_error"
             })
         });
-        return Ok((status, Json(body_json)).into_response());
+
+        let error_msg = extract_error_msg(&body_json);
+
+        let mut resp = (status, Json(body_json)).into_response();
+
+        if let Some(msg) = error_msg {
+            resp.extensions_mut().insert(AccessLogMeta {
+                model: "-".to_string(),
+                error: Some(msg),
+            });
+        }
+
+        return Ok(resp);
     }
 
+    // ... (rest of streaming logic) ...
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
@@ -335,4 +364,22 @@ async fn process_streaming_response(
     Ok(Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
         .into_response())
+}
+
+fn extract_error_msg(body: &Value) -> Option<String> {
+    if let Some(error) = body.get("error") {
+        if let Some(msg) = error.get("message").and_then(|v| v.as_str()) {
+            return Some(msg.to_string());
+        }
+        if let Some(msg) = error.as_str() {
+            return Some(msg.to_string());
+        }
+    }
+    // 如果是扁平结构 {"error": "msg", ...}
+    if let Some(msg) = body.get("error").and_then(|v| v.as_str()) {
+        return Some(msg.to_string());
+    }
+    // 尝试直接把 body 转字符串（如果是简单的 {"error": ...}）
+    // 或者如果不包含 error 字段，但 status 错了，就返回 body 的紧凑字符串
+    Some(body.to_string())
 }
