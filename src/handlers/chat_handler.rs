@@ -69,6 +69,8 @@ pub async fn handle_request_logic(
             return response;
         }
 
+        let matching_client_names: Vec<String> =
+            matching_clients.iter().map(|c| c.name.clone()).collect();
         let mut last_response: Option<Response> = None;
         let mut fallback_triggered = false;
 
@@ -159,15 +161,20 @@ pub async fn handle_request_logic(
             return resp;
         }
 
+        let error_message = format!(
+            "All upstream providers failed for the requested model. Tried clients: {:?}",
+            matching_client_names
+        );
+
         let err_msg = json!({
-            "error": "All upstream providers failed for the requested model.",
+            "error": error_message,
             "error_type": "upstream_error"
         });
 
         let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
         response.extensions_mut().insert(AccessLogMeta {
             model: current_model.clone(),
-            error: Some("All upstream providers failed".to_string()),
+            error: Some(error_message),
         });
         return response;
     }
