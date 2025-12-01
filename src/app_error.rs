@@ -102,6 +102,7 @@ impl IntoResponse for AppError {
         response.extensions_mut().insert(AccessLogMeta {
             model: "-".to_string(), // Can't easily access model here, default to "-"
             error: Some(error_message),
+            request_body: None,
         });
 
         response

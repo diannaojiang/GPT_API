@@ -24,7 +24,7 @@ use crate::{
     db::records::log_non_streaming_request,
     handlers::utils::{
         apply_prefix_to_json, build_request_body_generic, filter_empty_messages, get_client_ip,
-        process_messages, remove_think_tags,
+        process_messages, remove_think_tags, truncate_json,
     },
     models::requests::RequestPayload,
     state::app_state::AppState,
@@ -64,7 +64,8 @@ pub async fn handle_request_logic(
             let mut response = (StatusCode::UNPROCESSABLE_ENTITY, Json(err_msg)).into_response();
             response.extensions_mut().insert(AccessLogMeta {
                 model: current_model.clone(),
-                error: Some(format!("The model `{}` does not exist.", current_model)),
+                error: Some("No matching clients found".to_string()),
+                request_body: None,
             });
             return response;
         }
@@ -88,6 +89,7 @@ pub async fn handle_request_logic(
                         resp.extensions_mut().insert(AccessLogMeta {
                             model: current_model.clone(),
                             error: None,
+                            request_body: None,
                         });
                         return resp;
                     }
@@ -105,6 +107,7 @@ pub async fn handle_request_logic(
                             resp.extensions_mut().insert(AccessLogMeta {
                                 model: current_model.clone(),
                                 error: Some(format!("Upstream client error: {}", status)),
+                                request_body: None,
                             });
                         }
                         return resp;
@@ -156,6 +159,7 @@ pub async fn handle_request_logic(
                     error: Some(
                         "All upstream providers failed (forwarding last error)".to_string(),
                     ),
+                    request_body: None,
                 });
             }
             return resp;
@@ -175,6 +179,7 @@ pub async fn handle_request_logic(
         response.extensions_mut().insert(AccessLogMeta {
             model: current_model.clone(),
             error: Some(error_message),
+            request_body: None,
         });
         return response;
     }
@@ -212,7 +217,7 @@ async fn dispatch_request(
     // 核心修改：检查是否应该进入流式处理
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
     if payload.is_streaming() {
-        process_streaming_response(response, client_config, is_chat).await
+        process_streaming_response(response, client_config, is_chat, &request_body).await
     } else {
         process_non_streaming_response(
             app_state,
@@ -284,9 +289,11 @@ async fn process_non_streaming_response(
     *resp.status_mut() = status;
 
     if let Some(msg) = error_msg {
+        let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
         resp.extensions_mut().insert(AccessLogMeta {
             model: "-".to_string(), // Placeholder, will be updated by handle_request_logic
             error: Some(msg),
+            request_body: Some(log_body),
         });
     }
 
@@ -297,7 +304,9 @@ async fn process_streaming_response(
     response: reqwest::Response,
     client_config: &ClientConfig,
     is_chat: bool,
+    request_body: &Value,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    // 如果状态码不成功，直接作为普通 JSON 返回，不要包装成 SSE
     if !response.status().is_success() {
         let status = response.status();
         let body_bytes = response.bytes().await?;
@@ -313,15 +322,16 @@ async fn process_streaming_response(
         let mut resp = (status, Json(body_json)).into_response();
 
         if let Some(msg) = error_msg {
+            let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
             resp.extensions_mut().insert(AccessLogMeta {
                 model: "-".to_string(),
                 error: Some(msg),
+                request_body: Some(log_body),
             });
         }
 
         return Ok(resp);
     }
-
     // ... (rest of streaming logic) ...
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();

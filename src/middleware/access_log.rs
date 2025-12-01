@@ -17,6 +17,7 @@ use crate::handlers::utils::get_client_ip;
 pub struct AccessLogMeta {
     pub model: String,
     pub error: Option<String>,
+    pub request_body: Option<String>,
 }
 
 pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
@@ -69,21 +70,23 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-");
 
-    // 4. 提取 Handler 注入的 Model 和 Error 信息
-    let (model, error_msg) = if let Some(meta) = response.extensions().get::<AccessLogMeta>() {
-        (
-            meta.model.as_str(),
-            meta.error.clone().unwrap_or_else(|| "-".to_string()),
-        )
-    } else {
-        ("-", "-".to_string())
-    };
+    // 4. 提取 Handler 注入的 Model, Error 和 Request Body 信息
+    let (model, error_msg, req_body_option) =
+        if let Some(meta) = response.extensions().get::<AccessLogMeta>() {
+            (
+                meta.model.as_str(),
+                meta.error.clone().unwrap_or_else(|| "-".to_string()),
+                meta.request_body.clone(),
+            )
+        } else {
+            ("-", "-".to_string(), None)
+        };
 
     // 5. 构造 Nginx Combined 风格的日志字符串
-    // 格式: IP - - [Time] "Method URI Version" Status Bytes "Referer" "UserAgent" Latency "Model" "ApiKey" "Error"
+    // 格式: IP - - [Time] "Method URI Version" Status Bytes "Referer" "UserAgent" Latency "Model" "ApiKey" "Error" "RequestBody"
     let time_str = Utc::now().format("%d/%b/%Y:%H:%M:%S %z");
 
-    let log_line = format!(
+    let mut log_line = format!(
         "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" \"{}\"",
         client_ip,
         time_str,
@@ -101,8 +104,20 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
 
     // 6. 根据状态码决定日志级别
     if status.is_server_error() || status.is_client_error() {
+        // 仅在错误时记录请求体，并进行截断
+        if let Some(body) = req_body_option {
+            let truncated_body = if body.len() > 2048 {
+                format!("{}...[TRUNCATED]", &body[..2048])
+            } else {
+                body
+            };
+            log_line.push_str(&format!(" \"{}\"", truncated_body));
+        } else {
+            log_line.push_str(" \"-\"");
+        }
         error!(target: "access_log", "{}", log_line);
     } else {
+        // 成功请求不记录请求体
         info!(target: "access_log", "{}", log_line);
     }
 

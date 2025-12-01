@@ -245,3 +245,33 @@ pub fn apply_prefix_to_json(response_body: &mut Value, prefix: &str, is_chat: bo
         }
     }
 }
+
+/// 递归截断 JSON 对象，用于日志记录
+pub fn truncate_json(value: &Value) -> Value {
+    match value {
+        Value::String(s) => {
+            if s.len() > 500 {
+                json!(format!("{}...[TRUNCATED]", &s[..500]))
+            } else {
+                value.clone()
+            }
+        }
+        Value::Array(arr) => {
+            if arr.len() > 10 {
+                let mut new_arr: Vec<Value> = arr.iter().take(10).map(truncate_json).collect();
+                new_arr.push(json!(format!("...[TRUNCATED: {} items]", arr.len())));
+                Value::Array(new_arr)
+            } else {
+                Value::Array(arr.iter().map(truncate_json).collect())
+            }
+        }
+        Value::Object(map) => {
+            let new_map = map
+                .iter()
+                .map(|(k, v)| (k.clone(), truncate_json(v)))
+                .collect();
+            Value::Object(new_map)
+        }
+        _ => value.clone(),
+    }
+}
