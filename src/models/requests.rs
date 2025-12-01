@@ -90,6 +90,8 @@ pub struct ChatCompletionRequest {
     pub stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<Value>,
     // Add other fields as needed
 }
 

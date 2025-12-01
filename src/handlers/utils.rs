@@ -190,6 +190,9 @@ pub fn build_request_body_generic(
             if let Some(tools) = &p.tools {
                 body["tools"] = tools.clone();
             }
+            if let Some(kwargs) = &p.chat_template_kwargs {
+                body["chat_template_kwargs"] = kwargs.clone();
+            }
             body
         }
         RequestPayload::Completion(p) => {
