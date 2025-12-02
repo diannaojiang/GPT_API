@@ -46,10 +46,13 @@ impl ConfigManager {
         self.config.read().await
     }
 
-    async fn setup_watcher(config_path_str: &str, config: Arc<RwLock<Config>>) -> NotifyResult<RecommendedWatcher> {
+    async fn setup_watcher(
+        config_path_str: &str,
+        config: Arc<RwLock<Config>>,
+    ) -> NotifyResult<RecommendedWatcher> {
         let config_path = config_path_str.to_string();
         let config_path_for_check = config_path.clone();
-        
+
         // Capture the runtime handle to submit tasks from the non-async watcher thread
         let runtime_handle = tokio::runtime::Handle::current();
 
@@ -59,11 +62,15 @@ impl ConfigManager {
                 Ok(event) => {
                     // Check if the event is for our config file
                     // Using loose matching because editors often save to temp files and rename
-                    if event.paths.iter().any(|p| p.to_string_lossy().contains(&config_path_for_check)) {
+                    if event
+                        .paths
+                        .iter()
+                        .any(|p| p.to_string_lossy().contains(&config_path_for_check))
+                    {
                         info!("Config file changed, reloading...");
                         // Add a small delay to allow file write to complete
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        
+
                         match Self::load_config(&config_path_for_check) {
                             Ok(new_config) => {
                                 let config_clone = config.clone();
