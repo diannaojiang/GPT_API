@@ -278,3 +278,40 @@ pub fn truncate_json(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+
+use axum::{
+    extract::{FromRequest, Request},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::de::DeserializeOwned;
+
+/// 自定义 JSON 提取器，用于拦截反序列化错误并返回标准 JSON 格式的错误响应
+pub struct CustomJson<T>(pub T);
+
+#[axum::async_trait]
+impl<T, S> FromRequest<S> for CustomJson<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(data)) => Ok(CustomJson(data)),
+            Err(rejection) => {
+                // 提取原始错误信息
+                let error_message = rejection.body_text();
+                let error_response = json!({
+                    "error": format!("Request body validation failed: {}", error_message),
+                    "error_type": "InvalidRequest"
+                });
+
+                // 返回自定义的 JSON 错误响应
+                Err((StatusCode::BAD_REQUEST, Json(error_response)).into_response())
+            }
+        }
+    }
+}

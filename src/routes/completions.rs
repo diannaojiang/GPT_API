@@ -2,14 +2,13 @@ use axum::{
     extract::{ConnectInfo, State},
     http::HeaderMap,
     response::Response,
-    Json,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    handlers::chat_handler::handle_request_logic,
+    handlers::{chat_handler::handle_request_logic, utils::CustomJson},
     models::requests::{CompletionRequest, RequestPayload},
     state::app_state::AppState,
 };
@@ -19,9 +18,9 @@ pub async fn handle_completion(
     state: State<Arc<AppState>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    payload: Json<CompletionRequest>,
+    payload: CustomJson<CompletionRequest>,
 ) -> Response {
-    info!("Handling completion request for model: {}", payload.model);
+    info!("Handling completion request for model: {}", payload.0.model);
     handle_request_logic(
         state,
         headers,

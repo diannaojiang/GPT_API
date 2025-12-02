@@ -2,14 +2,13 @@ use axum::{
     extract::{ConnectInfo, State},
     http::HeaderMap,
     response::Response,
-    Json,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    handlers::chat_handler::handle_request_logic,
+    handlers::{chat_handler::handle_request_logic, utils::CustomJson},
     models::requests::{EmbeddingRequest, RequestPayload},
     state::app_state::AppState,
 };
@@ -18,9 +17,9 @@ pub async fn handle_embeddings(
     state: State<Arc<AppState>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    payload: Json<EmbeddingRequest>,
+    payload: CustomJson<EmbeddingRequest>,
 ) -> Response {
-    info!("Handling embeddings request for model: {}", payload.model);
+    info!("Handling embeddings request for model: {}", payload.0.model);
     handle_request_logic(
         state,
         headers,
