@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{RwLock, RwLockReadGuard};
+use tracing::{error, info};
 
 pub struct ConfigManager {
     config: Arc<RwLock<Config>>,
@@ -59,7 +60,7 @@ impl ConfigManager {
                     // Check if the event is for our config file
                     // Using loose matching because editors often save to temp files and rename
                     if event.paths.iter().any(|p| p.to_string_lossy().contains(&config_path_for_check)) {
-                        println!("Config file changed, reloading...");
+                        info!("Config file changed, reloading...");
                         // Add a small delay to allow file write to complete
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         
@@ -69,16 +70,16 @@ impl ConfigManager {
                                 // Use the captured handle to spawn the async task
                                 runtime_handle.spawn(async move {
                                     *config_clone.write().await = new_config;
-                                    println!("Config reloaded successfully.");
+                                    info!("Config reloaded successfully.");
                                 });
                             }
                             Err(e) => {
-                                eprintln!("Failed to reload config: {}", e);
+                                error!("Failed to reload config: {}", e);
                             }
                         }
                     }
                 }
-                Err(e) => eprintln!("watch error: {:?}", e),
+                Err(e) => error!("watch error: {:?}", e),
             }
         })?;
 
@@ -90,7 +91,7 @@ impl ConfigManager {
 
         watcher.watch(path_to_watch, RecursiveMode::NonRecursive)?;
 
-        println!(
+        info!(
             "Started watching config file directory: {:?}",
             path_to_watch
         );

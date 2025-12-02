@@ -10,7 +10,7 @@ openai_clients:
     base_url: "http://127.0.0.1:8001/v1"
     model_match:
       type: "keyword"
-      value: ["gpt", "test-exact-model", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-turbo-preview"]
+      value: ["gpt", "test-exact-model", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-turbo-preview", "new-model-added-via-hot-reload"] # Added new model
 
   # == For Fallback Test ==
   - name: "failing_service"
@@ -111,3 +111,5 @@ performance_test:
   num_requests: 100
   concurrency: 10
   request_timeout: 10
+
+# Trigger hot reload

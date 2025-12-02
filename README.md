@@ -80,12 +80,14 @@ openai_clients:
 
 ### 2. 启动容器
 
+> **注意**: 建议挂载整个 `config` 目录而不是单个 `config.yaml` 文件，以确保配置文件的热重载功能（Hot-Reload）在各种编辑器和文件系统下都能稳定工作。
+
 ```bash
 docker run -d \
   --name openai-api \
   -p 8000:8000 \
   -e RUST_LOG=warn \
-  -v $(pwd)/config/config.yaml:/app/config/config.yaml \
+  -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
   ghcr.io/diannaojiang/openai-api:b106
