@@ -279,7 +279,9 @@ pub fn truncate_json(value: &Value) -> Value {
     }
 }
 
+use crate::models::AccessLogMeta;
 use axum::{
+    body::Bytes,
     extract::{FromRequest, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -299,18 +301,37 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match Json::<T>::from_request(req, state).await {
-            Ok(Json(data)) => Ok(CustomJson(data)),
-            Err(rejection) => {
-                // 提取原始错误信息
-                let error_message = rejection.body_text();
+        // 1. 先读取 Bytes
+        let bytes = match Bytes::from_request(req, state).await {
+            Ok(b) => b,
+            Err(err) => return Err(err.into_response()),
+        };
+
+        // 2. 尝试反序列化
+        match serde_json::from_slice::<T>(&bytes) {
+            Ok(data) => Ok(CustomJson(data)),
+            Err(e) => {
+                // 3. 失败处理：记录日志元数据
+                let error_message = e.to_string();
+                // 将 bytes 转换为 string (lossy) 以便记录日志
+                let body_str = String::from_utf8_lossy(&bytes).to_string();
+
                 let error_response = json!({
                     "error": format!("Request body validation failed: {}", error_message),
                     "error_type": "InvalidRequest"
                 });
 
-                // 返回自定义的 JSON 错误响应
-                Err((StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response())
+                let mut response =
+                    (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
+
+                // 注入 AccessLogMeta 到 Response extensions
+                response.extensions_mut().insert(AccessLogMeta {
+                    model: "-".to_string(), // 解析失败，无法获知 model
+                    error: Some(format!("JSON Error: {}", error_message)),
+                    request_body: Some(body_str),
+                });
+
+                Err(response)
             }
         }
     }

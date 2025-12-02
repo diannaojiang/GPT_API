@@ -11,14 +11,7 @@ use std::time::Instant;
 use tracing::{error, info};
 
 use crate::handlers::utils::get_client_ip;
-
-// 用于在 Handler 和 Middleware 之间传递元数据的结构体
-#[derive(Clone)]
-pub struct AccessLogMeta {
-    pub model: String,
-    pub error: Option<String>,
-    pub request_body: Option<String>,
-}
+use crate::models::AccessLogMeta;
 
 pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
