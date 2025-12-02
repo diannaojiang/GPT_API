@@ -1,4 +1,4 @@
-use crate::middleware::access_log::AccessLogMeta;
+use crate::models::AccessLogMeta;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},

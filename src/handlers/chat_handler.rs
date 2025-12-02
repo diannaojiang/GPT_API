@@ -1,5 +1,5 @@
 use crate::client::routing::select_clients_by_weight;
-use crate::middleware::access_log::AccessLogMeta;
+use crate::models::AccessLogMeta;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
