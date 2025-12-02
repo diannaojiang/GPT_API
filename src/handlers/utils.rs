@@ -310,7 +310,7 @@ where
                 });
 
                 // 返回自定义的 JSON 错误响应
-                Err((StatusCode::BAD_REQUEST, Json(error_response)).into_response())
+                Err((StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response())
             }
         }
     }
