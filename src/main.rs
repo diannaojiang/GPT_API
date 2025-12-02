@@ -71,8 +71,13 @@ fn main() {
                 middleware::access_log::access_log_middleware,
             )); // Access Log 最外层
 
-        // Run our app with hyper, listening globally on port 8000
-        let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
+        // Run our app with hyper, listening globally on port 8000 or SERVER_PORT env var
+        let port = std::env::var("SERVER_PORT")
+            .unwrap_or_else(|_| "8000".to_string())
+            .parse()
+            .expect("SERVER_PORT must be a number");
+        // Listen on IPv6 "any" address (::), which generally also supports IPv4 (dual-stack)
+        let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
         let listener = TcpListener::bind(addr).await.unwrap();
         tracing::info!("listening on {}", addr);
         axum::serve(

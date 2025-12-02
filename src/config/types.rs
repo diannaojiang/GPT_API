@@ -22,13 +22,5 @@ pub struct ModelMatch {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub check_config: Option<CheckConfig>,
     pub openai_clients: Vec<ClientConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckConfig {
-    pub enabled: bool,
-    pub endpoint: String,
-    pub interval: u64,
 }
