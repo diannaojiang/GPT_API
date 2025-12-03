@@ -80,7 +80,7 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     let time_str = Utc::now().format("%d/%b/%Y:%H:%M:%S %z");
 
     let mut log_line = format!(
-        "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" \"{}\"",
+        "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" {:?}",
         client_ip,
         time_str,
         method,
@@ -104,7 +104,7 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
             } else {
                 body
             };
-            log_line.push_str(&format!(" \"{}\"", truncated_body));
+            log_line.push_str(&format!(" {:?}", truncated_body));
         } else {
             log_line.push_str(" \"-\"");
         }
