@@ -10,26 +10,31 @@ use axum::http::HeaderMap;
 pub fn get_client_ip(headers: &HeaderMap, addr: Option<SocketAddr>) -> String {
     if let Some(xff) = headers.get("x-forwarded-for") {
         if let Ok(xff_str) = xff.to_str() {
-            return xff_str
-                .split(',')
-                .next()
-                .unwrap_or(xff_str)
-                .trim()
-                .to_string();
+            let raw_ip = xff_str.split(',').next().unwrap_or(xff_str).trim();
+            return clean_ip(raw_ip);
         }
     }
 
     if let Some(xri) = headers.get("x-real-ip") {
         if let Ok(xri_str) = xri.to_str() {
-            return xri_str.trim().to_string();
+            return clean_ip(xri_str.trim());
         }
     }
 
     if let Some(addr) = addr {
-        return addr.ip().to_string();
+        return clean_ip(&addr.ip().to_string());
     }
 
     "unknown".to_string()
+}
+
+/// 辅助函数：清洗 IP 地址（移除 IPv4-mapped IPv6 前缀）
+fn clean_ip(ip: &str) -> String {
+    if let Some(ipv4) = ip.strip_prefix("::ffff:") {
+        ipv4.to_string()
+    } else {
+        ip.to_string()
+    }
 }
 
 /// 处理消息：清理空白字符和合并连续的用户消息
