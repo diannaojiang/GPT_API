@@ -1,9 +1,11 @@
 use crate::state::app_state::AppState;
 use axum::{
+    http::Method,
     routing::{get, post},
     Router,
 };
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 pub mod audio;
 pub mod chat;
@@ -14,6 +16,11 @@ pub mod health;
 pub mod models;
 
 pub fn create_router(app_state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_origin(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health::health_check))
         .route("/v1/models", get(models::get_models))
@@ -53,5 +60,6 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
             "/v1/audio/translations",
             post(audio::handle_audio_translation),
         )
+        .layer(cors)
         .with_state(app_state)
 }

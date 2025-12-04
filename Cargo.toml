@@ -21,3 +21,4 @@ rand = { version = "0.8.5", features = ["std_rng"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.5"
 tracing-appender = "0.2.3"
+tower-http = { version = "0.5", features = ["cors"] }
