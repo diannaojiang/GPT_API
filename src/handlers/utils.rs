@@ -6,7 +6,12 @@ use std::net::SocketAddr;
 
 use axum::http::HeaderMap;
 
-/// 从请求头中提取客户端 IP
+/// 从请求头中提取客户端真实 IP
+///
+/// 尝试顺序：
+/// 1. `X-Forwarded-For`: 标准代理头，取第一个 IP
+/// 2. `X-Real-IP`: Nginx 等常用头
+/// 3. `SocketAddr`: TCP 连接的远端地址
 pub fn get_client_ip(headers: &HeaderMap, addr: Option<SocketAddr>) -> String {
     if let Some(xff) = headers.get("x-forwarded-for") {
         if let Ok(xff_str) = xff.to_str() {

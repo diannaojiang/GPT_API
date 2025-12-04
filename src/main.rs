@@ -2,14 +2,16 @@ use axum::{extract::State, middleware as axum_middleware};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing_subscriber::{self, EnvFilter};
 
-use gpt_api::{client, config, db, handlers, middleware, models, routes, state};
+use gpt_api::{client, config, db, middleware, routes, state};
 
 use client::client_manager::ClientManager;
 use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
 
+/// 日志轮转中间件
+///
+/// 在处理请求前检查是否需要轮转数据库日志表
 async fn rotation_middleware(
     State(state): State<Arc<AppState>>,
     request: axum::http::Request<axum::body::Body>,

@@ -1,4 +1,3 @@
-pub mod payload;
 pub mod requests;
 
 #[derive(Clone)]

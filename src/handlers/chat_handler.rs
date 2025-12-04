@@ -30,7 +30,14 @@ use crate::{
     state::app_state::AppState,
 };
 
-/// 统一处理所有请求的核心函式，包含模型查找、尝试和后备逻辑。
+/// 统一处理所有请求的核心逻辑
+///
+/// 该函数实现了请求的完整生命周期管理：
+/// 1. **预处理**: 对 Chat 请求的消息进行清洗（去除空白、Think标签等）。
+/// 2. **模型匹配**: 查找配置中对应的后端客户端。
+/// 3. **负载均衡**: 根据权重选择具体的客户端。
+/// 4. **故障转移 (Failover)**: 当首选客户端失败（5xx错误）时，自动尝试 fallback 模型。
+/// 5. **日志记录**: 无论成功失败，都通过 AccessLogMeta 注入详细信息供中间件记录。
 pub async fn handle_request_logic(
     State(app_state): State<Arc<AppState>>,
     headers: HeaderMap,

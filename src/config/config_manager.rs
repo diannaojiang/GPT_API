@@ -11,11 +11,12 @@ use tracing::{error, info};
 
 pub struct ConfigManager {
     config: Arc<RwLock<Config>>,
-    config_path: String,
+    _config_path: String,         // 保留路径以备后用，添加 _ 前缀消除未使用警告
     _watcher: RecommendedWatcher, // Keep watcher alive
 }
 
 impl ConfigManager {
+    /// 创建新的 ConfigManager 并开始监听配置文件变化
     pub async fn new(config_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config = Self::load_config(config_path)?;
         let config_arc = Arc::new(RwLock::new(config));
@@ -25,7 +26,7 @@ impl ConfigManager {
 
         let manager = ConfigManager {
             config: config_arc,
-            config_path: config_path.to_string(),
+            _config_path: config_path.to_string(),
             _watcher: watcher,
         };
 

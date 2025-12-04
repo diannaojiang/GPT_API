@@ -1,10 +1,4 @@
-use axum::{
-    body::Body,
-    extract::ConnectInfo,
-    http::{Request, StatusCode},
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::ConnectInfo, http::Request, middleware::Next, response::Response};
 use chrono::Utc;
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -13,6 +7,10 @@ use tracing::{error, info};
 use crate::handlers::utils::get_client_ip;
 use crate::models::AccessLogMeta;
 
+/// 访问日志中间件
+///
+/// 记录详细的请求和响应信息，格式模仿 Nginx Combined Log Format。
+/// 并在发生错误时记录请求体以便排查。
 pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
 

@@ -148,6 +148,7 @@ pub struct ClassifyRequest {
 
 // --- Internal Structures for Multipart/Audio Handling ---
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MultipartPart {
     pub name: String,
@@ -156,6 +157,7 @@ pub struct MultipartPart {
     pub content_type: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AudioRequest {
     pub model: String,

@@ -1,47 +1,49 @@
-use axum::http::HeaderMap;
+use crate::config::types::ClientConfig;
+use crate::state::app_state::AppState;
 use reqwest::multipart::Form;
+use reqwest::{Client, Response};
 use serde_json::Value;
 use std::sync::Arc;
-use tracing;
 
-use crate::{config::types::ClientConfig, state::app_state::AppState};
-
-/// 从配置或传递的 Header 中获取 API Key
-pub fn get_api_key(client_config: &ClientConfig, headers: &HeaderMap) -> String {
-    // 首先检查客户端配置中是否有 API Key
-    if let Some(key) = &client_config.api_key {
+/// 从配置或请求头中获取 API Key
+///
+/// 优先级：
+/// 1. 客户端配置中的固定 key (`client_config.api_key`)
+/// 2. 请求头中的 Authorization Bearer token
+pub fn get_api_key(client_config: &ClientConfig, headers: &axum::http::HeaderMap) -> String {
+    if let Some(ref key) = client_config.api_key {
         if !key.is_empty() {
-            // Add this check
             return key.clone();
         }
     }
 
-    // 如果配置中没有，则从请求头中获取
-    if let Some(auth_header) = headers.get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(key) = auth_str.strip_prefix("Bearer ") {
-                return key.to_string();
-            } else {
-                return auth_str.to_string();
-            }
-        }
-    }
-
-    // 如果都没有，则返回空字符串
-    "".to_string()
+    // 尝试从请求头提取
+    headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.replace("Bearer ", ""))
+        .unwrap_or_default()
 }
 
-/// 建立并发送请求的通用函式
+/// 构建并发送 HTTP 请求到上游服务
+///
+/// 该函数负责：
+/// 1. 复用 HTTP 客户端连接
+/// 2. 构造请求头（包括 API Key）
+/// 3. 发送 POST 请求
 pub async fn build_and_send_request(
     app_state: &Arc<AppState>,
     _client_config: &ClientConfig,
     api_key: &str,
     url: &str,
     request_body: &Value,
-) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
-    let http_client = app_state.client_manager.get_client();
+) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    // 获取 HTTP 客户端 (复用)
+    let client: Client = app_state.client_manager.get_client();
 
-    let response = http_client
+    // 构造并发送请求
+    // 注意：ClientManager 默认设置了 180s 超时
+    let response = client
         .post(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
@@ -49,7 +51,6 @@ pub async fn build_and_send_request(
         .send()
         .await?;
 
-    // Do not check status here, let the handler decide whether to fallback or return the error
     Ok(response)
 }
 
@@ -68,6 +69,5 @@ pub async fn build_and_send_request_multipart(
         .send()
         .await?;
 
-    // Do not check status here
     Ok(response)
 }
