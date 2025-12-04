@@ -10,10 +10,13 @@ use std::sync::Arc;
 /// 优先级：
 /// 1. 客户端配置中的固定 key (`client_config.api_key`)
 /// 2. 请求头中的 Authorization Bearer token
-pub fn get_api_key(client_config: &ClientConfig, headers: &axum::http::HeaderMap) -> String {
+pub fn get_api_key(
+    client_config: &ClientConfig,
+    headers: &axum::http::HeaderMap,
+) -> Option<String> {
     if let Some(ref key) = client_config.api_key {
         if !key.is_empty() {
-            return key.clone();
+            return Some(key.clone());
         }
     }
 
@@ -22,7 +25,7 @@ pub fn get_api_key(client_config: &ClientConfig, headers: &axum::http::HeaderMap
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .map(|s| s.replace("Bearer ", ""))
-        .unwrap_or_default()
+        .filter(|s| !s.is_empty())
 }
 
 /// 构建并发送 HTTP 请求到上游服务
@@ -34,7 +37,7 @@ pub fn get_api_key(client_config: &ClientConfig, headers: &axum::http::HeaderMap
 pub async fn build_and_send_request(
     app_state: &Arc<AppState>,
     _client_config: &ClientConfig,
-    api_key: &str,
+    api_key: &Option<String>,
     url: &str,
     request_body: &Value,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
@@ -43,9 +46,13 @@ pub async fn build_and_send_request(
 
     // 构造并发送请求
     // 注意：ClientManager 默认设置了 180s 超时
-    let response = client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", api_key))
+    let mut request_builder = client.post(url);
+
+    if let Some(key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = request_builder
         .header("Content-Type", "application/json")
         .json(request_body)
         .send()
@@ -56,18 +63,19 @@ pub async fn build_and_send_request(
 
 pub async fn build_and_send_request_multipart(
     app_state: &Arc<AppState>,
-    api_key: &str,
+    api_key: &Option<String>,
     url: &str,
     form: Form,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let http_client = app_state.client_manager.get_client();
 
-    let response = http_client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .multipart(form)
-        .send()
-        .await?;
+    let mut request_builder = http_client.post(url);
+
+    if let Some(key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = request_builder.multipart(form).send().await?;
 
     Ok(response)
 }
