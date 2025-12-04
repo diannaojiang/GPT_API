@@ -90,7 +90,7 @@ docker run -d \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b125
+  ghcr.io/diannaojiang/openai-api:b128
 ```
 
 ## 🛠️ 本地构建与开发
