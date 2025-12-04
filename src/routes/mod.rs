@@ -24,34 +24,13 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health::health_check))
         .route("/v1/models", get(models::get_models))
-        .route(
-            "/v1/chat/completions",
-            get(chat::handle_chat_completion).post(chat::handle_chat_completion),
-        )
-        .route(
-            "/v1/completions",
-            get(completions::handle_completion).post(completions::handle_completion),
-        )
-        .route(
-            "/v1/embeddings",
-            get(embeddings::handle_embeddings).post(embeddings::handle_embeddings),
-        )
-        .route(
-            "/v1/rerank",
-            get(extras::handle_rerank).post(extras::handle_rerank),
-        )
-        .route(
-            "/rerank",
-            get(extras::handle_rerank).post(extras::handle_rerank),
-        )
-        .route(
-            "/score",
-            get(extras::handle_score).post(extras::handle_score),
-        )
-        .route(
-            "/classify",
-            get(extras::handle_classify).post(extras::handle_classify),
-        )
+        .route("/v1/chat/completions", post(chat::handle_chat_completion))
+        .route("/v1/completions", post(completions::handle_completion))
+        .route("/v1/embeddings", post(embeddings::handle_embeddings))
+        .route("/v1/rerank", post(extras::handle_rerank))
+        .route("/rerank", post(extras::handle_rerank))
+        .route("/score", post(extras::handle_score))
+        .route("/classify", post(extras::handle_classify))
         .route(
             "/v1/audio/transcriptions",
             post(audio::handle_audio_transcription),
