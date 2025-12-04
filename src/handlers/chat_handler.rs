@@ -176,9 +176,10 @@ pub async fn handle_request_logic(
         });
 
         let mut response = (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
-        
+
         // Serialize payload for logging
-        let payload_value = serde_json::to_value(&payload).unwrap_or(json!({"error": "failed to serialize payload"}));
+        let payload_value = serde_json::to_value(&payload)
+            .unwrap_or(json!({"error": "failed to serialize payload"}));
         let log_body = serde_json::to_string(&truncate_json(&payload_value)).unwrap_or_default();
 
         response.extensions_mut().insert(AccessLogMeta {

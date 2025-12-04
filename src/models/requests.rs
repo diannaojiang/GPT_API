@@ -21,7 +21,7 @@ pub enum MessageContent {
 
 // --- 1. 抽象请求类型 ---
 // 使用 enum 来统一不同类型的请求，这是很好的实践。
-#[derive(Debug, Clone)] // Add Debug and Clone traits
+#[derive(Debug, Clone, Serialize, Deserialize)] // Add Debug and Clone traits
 pub enum RequestPayload {
     Chat(ChatCompletionRequest),
     Completion(CompletionRequest),
