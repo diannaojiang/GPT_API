@@ -4,19 +4,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing_subscriber::{self, EnvFilter};
 
-mod client;
-mod config;
-mod db;
-mod handlers;
-// mod middleware; // Removed, use lib's middleware
-mod models;
-mod routes;
-mod state;
+use gpt_api::{client, config, db, handlers, middleware, models, routes, state};
 
-use gpt_api::middleware; // Import from library crate
-
-use crate::db::{check_and_rotate, init_db_pool};
 use client::client_manager::ClientManager;
+use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
 
 async fn rotation_middleware(
