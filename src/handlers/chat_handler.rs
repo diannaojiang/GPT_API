@@ -20,7 +20,6 @@ use tracing::{debug, error, info};
 use crate::{
     client::proxy::{build_and_send_request, get_api_key},
     config::types::ClientConfig,
-    db::check_and_rotate,
     db::records::log_non_streaming_request,
     handlers::utils::{
         apply_prefix_to_json, build_request_body_generic, filter_empty_messages, get_client_ip,
@@ -301,7 +300,6 @@ async fn process_non_streaming_response(
         let client_ip = get_client_ip(headers, addr);
 
         tokio::spawn(async move {
-            check_and_rotate(&app_state_clone).await;
             log_non_streaming_request(
                 &app_state_clone,
                 &headers_clone,

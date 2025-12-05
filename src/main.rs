@@ -9,18 +9,6 @@ use client::client_manager::ClientManager;
 use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
 
-/// 日志轮转中间件
-///
-/// 在处理请求前检查是否需要轮转数据库日志表
-async fn rotation_middleware(
-    State(state): State<Arc<AppState>>,
-    request: axum::http::Request<axum::body::Body>,
-    next: axum_middleware::Next,
-) -> axum::response::Response {
-    check_and_rotate(&state).await;
-    next.run(request).await
-}
-
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(128)
@@ -55,14 +43,19 @@ fn main() {
         // Add a small delay to ensure the database is fully initialized on disk
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let app = routes::create_router(app_state.clone())
-            .layer(axum_middleware::from_fn_with_state(
-                app_state.clone(),
-                rotation_middleware,
-            ))
-            .layer(axum_middleware::from_fn(
-                middleware::access_log::access_log_middleware,
-            )); // Access Log 最外层
+        // Background task for database rotation (runs every 60 seconds)
+        let rotation_state = app_state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                check_and_rotate(&rotation_state).await;
+            }
+        });
+
+        let app = routes::create_router(app_state.clone()).layer(axum_middleware::from_fn(
+            middleware::access_log::access_log_middleware,
+        )); // Access Log 最外层
 
         // Run our app with hyper, listening globally on port 8000 or SERVER_PORT env var
         let port = std::env::var("SERVER_PORT")
