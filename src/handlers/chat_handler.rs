@@ -32,6 +32,14 @@ use crate::{
     state::app_state::AppState,
 };
 
+fn prepare_chat_request(payload: &mut RequestPayload) {
+    if let RequestPayload::Chat(ref mut p) = payload {
+        let processed_messages = process_messages(p.messages.clone());
+        let filtered_messages = filter_empty_messages(processed_messages);
+        p.messages = remove_think_tags(filtered_messages);
+    }
+}
+
 /// 统一处理所有请求的核心逻辑
 ///
 /// 该函数实现了请求的完整生命周期管理：
@@ -47,11 +55,7 @@ pub async fn handle_request_logic(
     mut payload: RequestPayload,
 ) -> Response {
     // 对 Chat 请求，预处理 messages
-    if let RequestPayload::Chat(ref mut p) = payload {
-        let processed_messages = process_messages(p.messages.clone());
-        let filtered_messages = filter_empty_messages(processed_messages);
-        p.messages = remove_think_tags(filtered_messages);
-    }
+    prepare_chat_request(&mut payload);
 
     let mut current_model = payload.get_model().to_string();
 
