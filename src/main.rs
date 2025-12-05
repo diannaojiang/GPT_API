@@ -1,4 +1,5 @@
 use axum::{extract::State, middleware as axum_middleware};
+use mimalloc::MiMalloc;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -8,6 +9,9 @@ use gpt_api::{client, config, db, middleware, routes, state};
 use client::client_manager::ClientManager;
 use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
