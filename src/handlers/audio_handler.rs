@@ -1,11 +1,10 @@
+use crate::app_error::AppError;
 use axum::{
     extract::{Multipart, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use reqwest::multipart::{Form, Part};
-use serde_json::json;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -58,8 +57,12 @@ async fn handle_audio_request(
         let data = match field.bytes().await {
             Ok(bytes) => bytes.to_vec(),
             Err(e) => {
-                let err_msg = json!({"error": format!("Failed to read field data: {}", e)});
-                return (StatusCode::BAD_REQUEST, Json(err_msg)).into_response();
+                return AppError::ApiError(
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to read field data: {}", e),
+                    "multipart_error".to_string(),
+                )
+                .into_response();
             }
         };
 
@@ -76,11 +79,12 @@ async fn handle_audio_request(
     }
 
     if model_name.is_empty() {
-        return (
+        return AppError::ApiError(
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "Missing 'model' field in multipart form data"})),
+            "Missing 'model' field in multipart form data".to_string(),
+            "validation_error".to_string(),
         )
-            .into_response();
+        .into_response();
     }
 
     // 2. 路由逻辑
@@ -96,9 +100,7 @@ async fn handle_audio_request(
 
         if matching_clients.is_empty() {
             error!("No matching clients found for model: {}", current_model);
-            let err_msg =
-                json!({ "error": format!("The model `{}` does not exist.", current_model) });
-            return (StatusCode::NOT_FOUND, Json(err_msg)).into_response();
+            return AppError::ClientNotFound(current_model.clone()).into_response();
         }
 
         let mut fallback_triggered = false;
@@ -141,8 +143,7 @@ async fn handle_audio_request(
                         Ok(b) => b,
                         Err(e) => {
                             error!("Failed to read response bytes: {}", e);
-                            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read response")
-                                .into_response();
+                            return AppError::from(e).into_response();
                         }
                     };
 
@@ -170,9 +171,10 @@ async fn handle_audio_request(
         }
 
         if !fallback_triggered {
-            let err_msg =
-                json!({ "error": "All upstream providers failed for the requested model." });
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err_msg)).into_response();
+            return AppError::InternalServerError(
+                "All upstream providers failed for the requested model.".to_string(),
+            )
+            .into_response();
         }
     }
 }

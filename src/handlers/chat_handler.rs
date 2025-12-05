@@ -11,10 +11,8 @@ use axum::{
     Json,
 };
 use eventsource_stream::Eventsource;
-use futures::future;
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{debug, error, info};
