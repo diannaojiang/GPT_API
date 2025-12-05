@@ -51,11 +51,13 @@ pub async fn init_db_pool(_config: &Config) -> Result<SqlitePool, sqlx::Error> {
 
 /// 检查并轮换数据库
 pub async fn check_and_rotate(app_state: &Arc<AppState>) {
+    // debug!("Checking for database rotation...");
     let _lock = app_state.db_rotation_lock.lock().await;
     let db_path_str = std::env::var("RECD_PATH").unwrap_or_else(|_| "./record.db".to_string());
     let db_path = Path::new(&db_path_str);
 
     if !db_path.exists() {
+        // debug!("Database file does not exist: {}", db_path.display());
         return;
     }
 
@@ -103,11 +105,19 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
             );
         }
 
+        // Acquire write lock to block new requests and safely rotate
+        let mut pool_guard = app_state.db_pool.write().await;
+
+        // Close the current connection pool to release file locks (important for Windows, good practice elsewhere)
+        pool_guard.close().await;
+
         match fs::rename(db_path, &archive_path) {
             Ok(_) => info!("Database archived successfully."),
             Err(e) => {
                 error!("Failed to archive database: {}", e);
-                return;
+                // Attempt to restore pool? Or just let it fail and next retry will fix?
+                // Ideally we should re-open the original db if rename fails.
+                // For now, we try to re-init anyway to recover service.
             }
         }
 
@@ -115,7 +125,6 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
         let config = app_state.config_manager.get_config().await;
         match init_db_pool(&config).await {
             Ok(new_pool) => {
-                let mut pool_guard = app_state.db_pool.write().await;
                 *pool_guard = new_pool;
                 info!("Database pool re-initialized successfully.");
             }
