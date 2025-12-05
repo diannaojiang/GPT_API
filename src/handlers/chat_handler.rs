@@ -10,13 +10,14 @@ use axum::{
     },
     Json,
 };
+use eventsource_stream::Eventsource;
 use futures::future;
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     client::proxy::{build_and_send_request, get_api_key},
@@ -331,9 +332,10 @@ async fn process_streaming_response(
 
         return Ok(resp);
     }
-    // ... (rest of streaming logic) ...
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
+    // 使用 RefCell 或类似机制? 不，map 闭包是 FnMut，可以直接修改捕获的 mut 变量。
+    // 但是 prefix_applied 需要在闭包多次调用间保持状态。
     let mut prefix_applied = false;
 
     let content_json_pointer = if is_chat {
@@ -342,24 +344,21 @@ async fn process_streaming_response(
         "/choices/0/text"
     };
 
-    let sse_stream = stream
-        .map(|result| result.unwrap_or_default())
-        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-        .flat_map(|chunk| {
-            let parts: Vec<String> = chunk.split("\n\n").map(String::from).collect();
-            futures::stream::iter(parts)
-        })
-        .filter(|line| future::ready(!line.is_empty()))
-        .map(move |line| {
-            let mut event = Event::default();
-            if line.starts_with("data:") {
-                let data_str = line.strip_prefix("data:").unwrap().trim();
-                if data_str == "[DONE]" {
-                    event = event.data("[DONE]");
-                } else if let Ok(mut value) = serde_json::from_str::<Value>(data_str) {
+    // 使用 eventsource-stream 进行鲁棒的 SSE 解析
+    let sse_stream = stream.eventsource().map(move |result| {
+        match result {
+            Ok(event) => {
+                if event.data == "[DONE]" {
+                    return Ok(Event::default().data("[DONE]"));
+                }
+
+                // 尝试解析 JSON 数据
+                if let Ok(mut value) = serde_json::from_str::<Value>(&event.data) {
+                    // 如果配置了 special_prefix，且还没应用过，则尝试注入
                     if !prefix_applied && !special_prefix.is_empty() {
                         if let Some(delta_content) = value.pointer_mut(content_json_pointer) {
                             if let Some(s) = delta_content.as_str() {
+                                // 只有当内容不为空时才注入前缀
                                 if !s.is_empty() {
                                     *delta_content = json!(format!("{}{}", special_prefix, s));
                                     prefix_applied = true;
@@ -367,15 +366,18 @@ async fn process_streaming_response(
                             }
                         }
                     }
-                    event = event.data(serde_json::to_string(&value).unwrap_or_default());
+                    Ok(Event::default().data(serde_json::to_string(&value).unwrap_or_default()))
                 } else {
-                    event = event.data(data_str);
+                    // 如果不是 JSON（或者是其他类型的事件数据），原样转发
+                    Ok(Event::default().data(event.data))
                 }
-            } else {
-                event = event.data(line);
             }
-            Ok::<axum::response::sse::Event, Infallible>(event)
-        });
+            Err(e) => {
+                error!("Error parsing SSE stream: {}", e);
+                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            }
+        }
+    });
 
     Ok(Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
