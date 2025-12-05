@@ -117,15 +117,18 @@ pub fn filter_empty_messages(messages: Vec<Message>) -> Vec<Message> {
         .collect()
 }
 
+use once_cell::sync::Lazy;
+
+static THINK_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<think>.*?</think>").unwrap());
+
 /// 移除助手消息中的思考标签
 pub fn remove_think_tags(messages: Vec<Message>) -> Vec<Message> {
-    let think_tag_re = Regex::new(r"<think>.*?</think>").unwrap();
     messages
         .into_iter()
         .map(|mut message| {
             if message.role == "assistant" {
                 if let Some(MessageContent::String(content)) = &message.content {
-                    let new_content = think_tag_re.replace_all(content, "").to_string();
+                    let new_content = THINK_TAG_RE.replace_all(content, "").to_string();
                     message.content = Some(MessageContent::String(new_content));
                 }
             }
