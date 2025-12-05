@@ -6,6 +6,9 @@ use std::net::SocketAddr;
 
 use axum::http::HeaderMap;
 
+const HEADER_X_FORWARDED_FOR: &str = "x-forwarded-for";
+const HEADER_X_REAL_IP: &str = "x-real-ip";
+
 /// 从请求头中提取客户端真实 IP
 ///
 /// 尝试顺序：
@@ -13,14 +16,14 @@ use axum::http::HeaderMap;
 /// 2. `X-Real-IP`: Nginx 等常用头
 /// 3. `SocketAddr`: TCP 连接的远端地址
 pub fn get_client_ip(headers: &HeaderMap, addr: Option<SocketAddr>) -> String {
-    if let Some(xff) = headers.get("x-forwarded-for") {
+    if let Some(xff) = headers.get(HEADER_X_FORWARDED_FOR) {
         if let Ok(xff_str) = xff.to_str() {
             let raw_ip = xff_str.split(',').next().unwrap_or(xff_str).trim();
             return clean_ip(raw_ip);
         }
     }
 
-    if let Some(xri) = headers.get("x-real-ip") {
+    if let Some(xri) = headers.get(HEADER_X_REAL_IP) {
         if let Ok(xri_str) = xri.to_str() {
             return clean_ip(xri_str.trim());
         }
