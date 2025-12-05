@@ -40,6 +40,24 @@ fn prepare_chat_request(payload: &mut RequestPayload) {
     }
 }
 
+async fn resolve_client_chain(
+    app_state: &Arc<AppState>,
+    model_name: &str,
+) -> Result<Vec<ClientConfig>, AppError> {
+    let config_guard = app_state.config_manager.get_config_guard().await;
+    let matching_clients = app_state
+        .client_manager
+        .find_matching_clients(&config_guard, model_name)
+        .await;
+    let matching_clients = select_clients_by_weight(matching_clients);
+
+    if matching_clients.is_empty() {
+        Err(AppError::ClientNotFound(model_name.to_string()))
+    } else {
+        Ok(matching_clients)
+    }
+}
+
 /// 统一处理所有请求的核心逻辑
 ///
 /// 该函数实现了请求的完整生命周期管理：
@@ -61,16 +79,10 @@ pub async fn handle_request_logic(
 
     loop {
         payload.set_model(current_model.clone());
-        let config_guard = app_state.config_manager.get_config_guard().await;
-        let matching_clients = app_state
-            .client_manager
-            .find_matching_clients(&config_guard, &current_model)
-            .await;
-        let matching_clients = select_clients_by_weight(matching_clients);
-
-        if matching_clients.is_empty() {
-            return AppError::ClientNotFound(current_model.clone()).into_response();
-        }
+        let matching_clients = match resolve_client_chain(&app_state, &current_model).await {
+            Ok(clients) => clients,
+            Err(e) => return e.into_response(),
+        };
 
         let matching_client_names: Vec<String> =
             matching_clients.iter().map(|c| c.name.clone()).collect();
