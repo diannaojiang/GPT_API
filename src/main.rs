@@ -43,10 +43,16 @@ fn main() {
         // Add a small delay to ensure the database is fully initialized on disk
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        // Background task for database rotation (runs every 60 seconds)
+        // Background task for database rotation
         let rotation_state = app_state.clone();
+        let rotation_interval: u64 = std::env::var("DB_ROTATION_CHECK_INTERVAL_SEC")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(rotation_interval));
             loop {
                 interval.tick().await;
                 check_and_rotate(&rotation_state).await;

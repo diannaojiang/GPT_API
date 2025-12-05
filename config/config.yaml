@@ -10,7 +10,7 @@ openai_clients:
     base_url: "http://127.0.0.1:8001/v1"
     model_match:
       type: "keyword"
-      value: ["gpt", "test-exact-model", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-turbo-preview", "new-model-added-via-hot-reload"] # Added new model
+      value: ["gpt", "test-exact-model", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-turbo-preview"]
 
   # == For Fallback Test ==
   - name: "failing_service"
@@ -105,11 +105,26 @@ openai_clients:
     model_match:
       type: "exact"
       value: ["gpt-4-vision-preview"]
-    
+
+  # == For Load Balancing Test ==
+  - name: "load_balance_server_1"
+    api_key: "sk-token"
+    base_url: "http://127.0.0.1:8001/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-load-balancing"]
+    priority: 3
+
+  - name: "load_balance_server_2"
+    api_key: "sk-token"
+    base_url: "http://127.0.0.1:8002/v1"
+    model_match:
+      type: "exact"
+      value: ["model-for-load-balancing"]
+    priority: 1
+
 performance_test:
   target_url: "http://127.0.0.1:8000/v1/chat/completions"  # Rust app listens on port 8000
   num_requests: 100
-  concurrency: 10
-  request_timeout: 10
-
-# Trigger hot reload
+  concurrency: 100
+  request_timeout: 30
