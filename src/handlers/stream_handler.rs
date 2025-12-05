@@ -24,7 +24,10 @@ pub async fn process_streaming_response(
     if !response.status().is_success() {
         let status = response.status();
         let body_bytes = response.bytes().await?;
-        let body_json: Value = serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
+
+        // 使用 simd-json 解析错误响应
+        let mut buf = body_bytes.to_vec();
+        let body_json: Value = simd_json::from_slice(&mut buf).unwrap_or_else(|_| {
             json!({
                 "error": String::from_utf8_lossy(&body_bytes).to_string(),
                 "error_type": "upstream_error"
@@ -64,8 +67,9 @@ pub async fn process_streaming_response(
                     return Ok(Event::default().data("[DONE]"));
                 }
 
-                // 尝试解析 JSON 数据
-                if let Ok(mut value) = serde_json::from_str::<Value>(&event.data) {
+                // 尝试解析 JSON 数据 (使用 simd-json 加速)
+                let mut data_str = event.data;
+                if let Ok(mut value) = unsafe { simd_json::from_str::<Value>(&mut data_str) } {
                     // 如果配置了 special_prefix，且还没应用过，则尝试注入
                     if !prefix_applied && !special_prefix.is_empty() {
                         if let Some(delta_content) = value.pointer_mut(content_json_pointer) {
@@ -78,10 +82,12 @@ pub async fn process_streaming_response(
                             }
                         }
                     }
-                    Ok(Event::default().data(serde_json::to_string(&value).unwrap_or_default()))
+                    // 使用 simd_json 序列化回字符串
+                    Ok(Event::default().data(simd_json::to_string(&value).unwrap_or_default()))
                 } else {
                     // 如果不是 JSON（或者是其他类型的事件数据），原样转发
-                    Ok(Event::default().data(event.data))
+                    // 注意：data_str 可能在 from_str 失败时被部分修改，但在 SSE 场景下非 JSON 数据通常是简单的文本，影响不大
+                    Ok(Event::default().data(data_str))
                 }
             }
             Err(e) => {

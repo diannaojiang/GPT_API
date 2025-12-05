@@ -323,13 +323,17 @@ where
             Err(err) => return Err(err.into_response()),
         };
 
-        // 2. 尝试反序列化
-        match serde_json::from_slice::<T>(&bytes) {
+        // 2. 尝试反序列化 (使用 simd-json 加速)
+        // simd-json 需要可变 buffer，因此需要转换为 Vec<u8>
+        let mut buf = bytes.to_vec();
+
+        match simd_json::from_slice::<T>(&mut buf) {
             Ok(data) => Ok(CustomJson(data)),
             Err(e) => {
                 // 3. 失败处理：记录日志元数据
                 let error_message = e.to_string();
                 // 将 bytes 转换为 string (lossy) 以便记录日志
+                // 注意：buf 已经被 from_slice 修改了，但对于打印错误日志来说通常还可以辨认
                 let body_str = String::from_utf8_lossy(&bytes).to_string();
 
                 let error_response = json!({

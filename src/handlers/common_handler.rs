@@ -128,7 +128,16 @@ async fn process_non_streaming_response(
     response: reqwest::Response,
 ) -> Result<Response, AppError> {
     let status = response.status();
-    let mut response_body: Value = response.json().await?;
+    // let mut response_body: Value = response.json().await?;
+    // 使用 simd-json 加速大 JSON 解析
+    let body_bytes = response.bytes().await?;
+    let mut buf = body_bytes.to_vec();
+    let mut response_body: Value = simd_json::from_slice(&mut buf).map_err(|e| {
+        AppError::InternalServerError(format!(
+            "Failed to parse upstream JSON with simd-json: {}",
+            e
+        ))
+    })?;
 
     // 如果是错误响应，尝试提取错误信息并注入日志元数据
     let error_msg = if !status.is_success() {
