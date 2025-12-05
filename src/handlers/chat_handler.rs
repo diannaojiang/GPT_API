@@ -58,6 +58,92 @@ async fn resolve_client_chain(
     }
 }
 
+async fn execute_client_chain(
+    app_state: &Arc<AppState>,
+    headers: &HeaderMap,
+    addr: Option<SocketAddr>,
+    payload: &RequestPayload,
+    clients: Vec<ClientConfig>,
+    current_model_name: &str,
+) -> Result<Response, Option<String>> {
+    let mut last_response: Option<Response> = None;
+
+    for client_config in clients {
+        let result = dispatch_request(app_state, headers, addr, payload, &client_config).await;
+
+        match result {
+            Ok(mut resp) => {
+                let status = resp.status();
+
+                // 1. 成功 (2xx) -> 直接返回
+                if status.is_success() {
+                    resp.extensions_mut().insert(AccessLogMeta {
+                        model: current_model_name.to_string(),
+                        error: None,
+                        request_body: None,
+                    });
+                    return Ok(resp);
+                }
+
+                // 2. 客户端错误 (4xx) -> 认为是业务错误，不重试，直接透传
+                if status.is_client_error() {
+                    if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
+                        meta.model = current_model_name.to_string();
+                    } else {
+                        resp.extensions_mut().insert(AccessLogMeta {
+                            model: current_model_name.to_string(),
+                            error: Some(format!("Upstream client error: {}", status)),
+                            request_body: None,
+                        });
+                    }
+                    return Ok(resp);
+                }
+
+                // 3. 服务端错误 (5xx) -> 检查是否有 Fallback
+                if status.is_server_error() {
+                    debug!(
+                        "Client {} failed with status {}. Checking fallback...",
+                        client_config.name, status
+                    );
+
+                    if let Some(fallback_model) = &client_config.fallback {
+                        info!("Falling back to model: {}", fallback_model);
+                        return Err(Some(fallback_model.clone()));
+                    }
+
+                    last_response = Some(resp);
+                }
+            }
+            Err(e) => {
+                debug!(
+                    "Failed to process request with client {}: {}",
+                    client_config.name, e
+                );
+                if let Some(fallback_model) = &client_config.fallback {
+                    info!("Falling back to model: {}", fallback_model);
+                    return Err(Some(fallback_model.clone()));
+                }
+                last_response = Some(e.into_response());
+            }
+        }
+    }
+
+    if let Some(mut resp) = last_response {
+        if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
+            meta.model = current_model_name.to_string();
+        } else {
+            resp.extensions_mut().insert(AccessLogMeta {
+                model: current_model_name.to_string(),
+                error: Some("All upstream providers failed (forwarding last error)".to_string()),
+                request_body: None,
+            });
+        }
+        return Ok(resp);
+    }
+
+    Err(None)
+}
+
 /// 统一处理所有请求的核心逻辑
 ///
 /// 该函数实现了请求的完整生命周期管理：
@@ -86,114 +172,45 @@ pub async fn handle_request_logic(
 
         let matching_client_names: Vec<String> =
             matching_clients.iter().map(|c| c.name.clone()).collect();
-        let mut last_response: Option<Response> = None;
-        let mut fallback_triggered = false;
 
-        for client_config in matching_clients {
-            // 所有请求都通过这个统一的派发函数
-            let result =
-                dispatch_request(&app_state, &headers, addr, &payload, &client_config).await;
-
-            match result {
-                Ok(mut resp) => {
-                    let status = resp.status();
-
-                    // 1. 成功 (2xx) -> 直接返回
-                    if status.is_success() {
-                        resp.extensions_mut().insert(AccessLogMeta {
-                            model: current_model.clone(),
-                            error: None,
-                            request_body: None,
-                        });
-                        return resp;
-                    }
-
-                    // 2. 客户端错误 (4xx) -> 认为是业务错误，不重试，直接透传
-                    if status.is_client_error() {
-                        if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
-                            meta.model = current_model.clone();
-                        } else {
-                            resp.extensions_mut().insert(AccessLogMeta {
-                                model: current_model.clone(),
-                                error: Some(format!("Upstream client error: {}", status)),
-                                request_body: None,
-                            });
-                        }
-                        return resp;
-                    }
-
-                    // 3. 服务端错误 (5xx) -> 检查是否有 Fallback
-                    if status.is_server_error() {
-                        debug!(
-                            "Client {} failed with status {}. Checking fallback...",
-                            client_config.name, status
-                        );
-
-                        if let Some(fallback_model) = &client_config.fallback {
-                            info!("Falling back to model: {}", fallback_model);
-                            current_model = fallback_model.clone();
-                            fallback_triggered = true;
-                            break;
-                        }
-
-                        last_response = Some(resp);
-                    }
-                }
-                Err(e) => {
-                    // AppError
-                    debug!(
-                        "Failed to process request with client {}: {}",
-                        client_config.name, e
-                    );
-                    if let Some(fallback_model) = &client_config.fallback {
-                        info!("Falling back to model: {}", fallback_model);
-                        current_model = fallback_model.clone();
-                        fallback_triggered = true;
-                        break;
-                    }
-                    // Convert AppError to Response for storage in last_response
-                    last_response = Some(e.into_response());
-                }
+        match execute_client_chain(
+            &app_state,
+            &headers,
+            addr,
+            &payload,
+            matching_clients,
+            &current_model,
+        )
+        .await
+        {
+            Ok(response) => return response,
+            Err(Some(fallback_model)) => {
+                current_model = fallback_model;
+                continue;
             }
-        }
+            Err(None) => {
+                // All failed
+                let error_message = format!(
+                    "All upstream providers failed for the requested model. Tried clients: {:?}",
+                    matching_client_names
+                );
 
-        if fallback_triggered {
-            continue;
-        }
+                let mut response =
+                    AppError::InternalServerError(error_message.clone()).into_response();
 
-        if let Some(mut resp) = last_response {
-            if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
-                meta.model = current_model.clone();
-            } else {
-                resp.extensions_mut().insert(AccessLogMeta {
+                let payload_value = serde_json::to_value(&payload)
+                    .unwrap_or(json!({"error": "failed to serialize payload"}));
+                let log_body =
+                    serde_json::to_string(&truncate_json(&payload_value)).unwrap_or_default();
+
+                response.extensions_mut().insert(AccessLogMeta {
                     model: current_model.clone(),
-                    error: Some(
-                        "All upstream providers failed (forwarding last error)".to_string(),
-                    ),
-                    request_body: None,
+                    error: Some(error_message),
+                    request_body: Some(log_body),
                 });
+                return response;
             }
-            return resp;
         }
-
-        let error_message = format!(
-            "All upstream providers failed for the requested model. Tried clients: {:?}",
-            matching_client_names
-        );
-
-        let mut response = AppError::InternalServerError(error_message.clone()).into_response();
-
-        // Serialize payload for logging
-        let payload_value = serde_json::to_value(&payload)
-            .unwrap_or(json!({"error": "failed to serialize payload"}));
-        let log_body = serde_json::to_string(&truncate_json(&payload_value)).unwrap_or_default();
-
-        response.extensions_mut().insert(AccessLogMeta {
-            model: current_model.clone(),
-            error: Some(error_message),
-            request_body: Some(log_body),
-        });
-        return response;
     }
 }
 
