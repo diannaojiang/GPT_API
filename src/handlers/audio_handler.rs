@@ -6,11 +6,10 @@ use axum::{
 };
 use reqwest::multipart::{Form, Part};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     client::proxy::{build_and_send_request_multipart, get_api_key},
-    client::routing::select_clients_by_weight,
     state::app_state::AppState,
 };
 
@@ -87,94 +86,82 @@ async fn handle_audio_request(
         .into_response();
     }
 
-    // 2. 路由逻辑
-    let mut current_model = model_name.clone();
+    // 2. 委托给 DispatcherService 处理路由和重试
+    app_state
+        .dispatcher_service
+        .execute(&model_name, |client_config, _current_model| {
+            let app_state = app_state.clone();
+            let headers = headers.clone();
+            let endpoint_path = endpoint_path.to_string();
 
-    loop {
-        let config_guard = app_state.config_manager.get_config_guard().await;
-        let matching_clients = app_state
-            .client_manager
-            .find_matching_clients(&config_guard, &current_model)
-            .await;
-        let matching_clients = select_clients_by_weight(matching_clients);
+            // 重新构建 cached_parts 的克隆，供本次请求使用
+            let parts_clone: Vec<CachedPart> = cached_parts
+                .iter()
+                .map(|p| CachedPart {
+                    name: p.name.clone(),
+                    data: p.data.clone(),
+                    file_name: p.file_name.clone(),
+                    content_type: p.content_type.clone(),
+                })
+                .collect();
 
-        if matching_clients.is_empty() {
-            error!("No matching clients found for model: {}", current_model);
-            return AppError::ClientNotFound(current_model.clone()).into_response();
-        }
+            let client_config = client_config.clone();
 
-        let mut fallback_triggered = false;
-        for client_config in matching_clients {
-            // 3. 为每个客户端重新构建 Form
-            let mut form = Form::new();
-            for part in &cached_parts {
-                let mut req_part = Part::bytes(part.data.clone());
-                if let Some(fn_str) = &part.file_name {
-                    req_part = req_part.file_name(fn_str.clone());
+            async move {
+                // 3. 为每个客户端重新构建 Form
+                let mut form = Form::new();
+                for part in parts_clone {
+                    let mut req_part = Part::bytes(part.data);
+                    if let Some(fn_str) = part.file_name {
+                        req_part = req_part.file_name(fn_str);
+                    }
+                    if let Some(ct_str) = part.content_type {
+                        if let Ok(_) = ct_str.parse::<mime::Mime>() {
+                            req_part = req_part.mime_str(&ct_str).expect("Mime confirmed valid");
+                        } else {
+                            error!("Invalid mime type in audio part: {}", ct_str);
+                        }
+                    }
+                    form = form.part(part.name, req_part);
                 }
-                if let Some(ct_str) = &part.content_type {
-                    req_part = match req_part.mime_str(ct_str) {
-                        Ok(p) => p,
-                        Err(_) => {
-                            let mut p = Part::bytes(part.data.clone());
-                            if let Some(fn_str) = &part.file_name {
-                                p = p.file_name(fn_str.clone());
+
+                let url = format!(
+                    "{}/{}",
+                    client_config.base_url.trim_end_matches('/'),
+                    endpoint_path
+                );
+                let api_key = get_api_key(&client_config, &headers);
+
+                // 4. 发送请求
+                match build_and_send_request_multipart(&app_state, &api_key, &url, form).await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let headers = resp.headers().clone();
+                        let bytes = match resp.bytes().await {
+                            Ok(b) => b,
+                            Err(e) => {
+                                error!("Failed to read response bytes: {}", e);
+                                return Err(AppError::from(e));
                             }
-                            p
+                        };
+
+                        let mut response = bytes.into_response();
+                        *response.status_mut() = status;
+                        if let Some(ct) = headers.get("content-type") {
+                            response.headers_mut().insert("content-type", ct.clone());
                         }
-                    };
-                }
-                form = form.part(part.name.clone(), req_part);
-            }
 
-            let url = format!(
-                "{}/{}",
-                client_config.base_url.trim_end_matches('/'),
-                endpoint_path
-            );
-            let api_key = get_api_key(&client_config, &headers);
-
-            // 4. 发送请求
-            match build_and_send_request_multipart(&app_state, &api_key, &url, form).await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let headers = resp.headers().clone();
-                    let bytes = match resp.bytes().await {
-                        Ok(b) => b,
-                        Err(e) => {
-                            error!("Failed to read response bytes: {}", e);
-                            return AppError::from(e).into_response();
-                        }
-                    };
-
-                    let mut response = bytes.into_response();
-                    *response.status_mut() = status;
-                    if let Some(ct) = headers.get("content-type") {
-                        response.headers_mut().insert("content-type", ct.clone());
+                        Ok(response)
                     }
-
-                    return response;
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to process audio request with client {}: {:?}",
-                        client_config.name, e
-                    );
-                    if let Some(fallback_model) = &client_config.fallback {
-                        info!("Falling back to model: {}", fallback_model);
-                        current_model = fallback_model.clone();
-                        fallback_triggered = true;
-                        break;
+                    Err(e) => {
+                        error!(
+                            "Failed to process audio request with client {}: {:?}",
+                            client_config.name, e
+                        );
+                        Err(AppError::InternalServerError(e.to_string()))
                     }
                 }
             }
-        }
-
-        if !fallback_triggered {
-            return AppError::InternalServerError(
-                "All upstream providers failed for the requested model.".to_string(),
-            )
-            .into_response();
-        }
-    }
+        })
+        .await
 }
