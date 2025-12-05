@@ -3,7 +3,16 @@ FROM rust:latest as builder
 
 WORKDIR /usr/src/app
 COPY . .
-RUN cargo build --release
+
+# 注入架构特定的 CPU 优化参数
+# 注意：这将生成针对特定 CPU (Zen4 / Kunpeng 920) 优化的二进制文件
+# 如果运行环境不支持这些指令集，程序将无法启动 (Illegal Instruction)
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      "amd64") export RUSTFLAGS="-C target-cpu=znver4" ;; \
+      "arm64") export RUSTFLAGS="-C target-cpu=tsv110" ;; \
+    esac && \
+    cargo build --release
 
 # Runtime Stage
 FROM debian:bookworm-slim

@@ -125,6 +125,6 @@ openai_clients:
 
 performance_test:
   target_url: "http://127.0.0.1:8000/v1/chat/completions"  # Rust app listens on port 8000
-  num_requests: 100
+  num_requests: 5000
   concurrency: 100
   request_timeout: 30
