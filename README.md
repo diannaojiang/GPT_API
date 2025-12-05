@@ -1,149 +1,107 @@
-# OpenAI API Gateway (GPT_API - Rust Edition)
 
-[![Release](https://img.shields.io/github/v/release/diannaojiang/GPT_API)](https://github.com/diannaojiang/GPT_API/releases) [![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml)
+# GPT_API (Rust Edition)
 
-**高性能、企业级的 OpenAI API 聚合网关，基于 Rust 重构。**
+[![Release](https://img.shields.io/github/v/release/diannaojiang/GPT_API)](https://github.com/diannaojiang/GPT_API/releases) [![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-GPT_API 是一个轻量级但在高并发下表现优异的反向代理服务。它允许您统一管理多个 LLM 后端（如 OpenAI, Azure, DeepSeek, Groq 等），并通过统一的 OpenAI 兼容接口对外提供服务。
+**高性能、生产级的 OpenAI API 聚合网关与负载均衡器。**
 
-相比原有的 Python 版本，Rust 重构版在保持 100% 业务逻辑兼容的同时，提供了毫秒级的路由延迟、更低的内存占用和极高的吞吐量。
+GPT_API 是一个基于 Rust 重构的高性能反向代理服务。它允许你统一管理多个 LLM 后端（如 OpenAI, Azure, DeepSeek, vLLM 等），并通过标准的 OpenAI 兼容接口对外提供服务。
+
+本项目专为**高并发**场景设计，利用 Rust 的零成本抽象和 SIMD 指令集优化，在极低的资源占用下提供毫秒级的路由延迟。
 
 ## ✨ 核心特性
 
-### 🚀 极致性能与架构
-- **Rust 驱动**: 基于 `Axum` web 框架和 `Tokio` 异步运行时，专为高并发设计。
-- **零停机热重载**: 修改 `config.yaml` 配置文件后，服务会自动检测并热加载新配置，无需重启即可生效。
-- **多架构支持**: 提供 `linux/amd64` 和 `linux/arm64` 的 Docker 镜像，适配各类服务器与边缘设备。
+### 🚀 极致性能
+- **Rust 驱动**: 基于 `Axum` 和 `Tokio` 异步运行时。
+- **SIMD 加速**: 全面集成 `simd-json`，利用 AVX2/NEON 指令集加速 JSON 解析与序列化。
+- **内存优化**: 默认使用 `mimalloc` 分配器，大幅减少高并发下的内存碎片与锁竞争。
+- **硬件级优化**: Docker 镜像针对现代高性能多核处理器进行了特定指令集编译。
 
-### 🔀 智能路由与负载均衡
-- **多策略路由**:
-    - **Keyword**: 根据模型名称中的关键字（如 "gpt-4"）路由到特定后端。
-    - **Exact**: 精确匹配模型名称。
-- **加权负载均衡**: 支持为不同后端设置 `priority` 权重，实现流量的加权分配与负载分担。
-- **自动故障转移 (Fallback)**: 当主后端请求失败时，自动无缝切换到配置的 `fallback` 备用模型，确保服务高可用。
+### 🔀 智能流量调度
+- **多策略路由**: 支持关键字匹配 (`keyword`) 和精确匹配 (`exact`)。
+- **加权负载均衡**: 支持为不同渠道设置权重 (`priority`)，自动分配流量。
+- **自动故障转移 (Failover)**: 当主渠道发生 5xx 错误时，自动无缝切换至 `fallback` 备用模型，确保服务高可用。
 
-### 🛠️ 高级参数处理与数据清洗
-- **智能参数注入**:
-    - **`special_prefix`**: 支持在响应内容（包括流式响应）前自动注入特定前缀（如 `<think>` 标签）。
-    - **`stop`**: 自动向后端转发停止词配置，精准控制生成结束。
-- **响应清洗**: 自动移除特定模型（如 DeepSeek）响应中的 `<think>` 思考过程标签，保持输出内容的整洁性。
-- **消息优化**: 自动合并连续的 User 消息，过滤空消息，确请求格式符合上游要求。
-- **Key 管理**: 支持从配置文件统一管理 API Key，也支持允许客户端在请求头中透传 Key。
-
-### 📊 全面的可观测性
-- **SQLite 审计日志**: 自动将所有请求详情（Prompt, Completion, Tokens, Latency, Client IP 等）持久化到 SQLite 数据库。
-- **多模态与工具调用记录**: 智能识别并标记多模态（Vision）请求和 Function Calling 请求，便于后续分析。
-- **自动归档**: 数据库文件按月自动轮转归档，防止单文件过大影响性能。
-- **健康检查**: 提供 `/health` 端点用于负载均衡器探活。
+### 🛠️ 企业级功能
+- **零停机热重载**: 修改 `config.yaml` 后自动生效，无需重启服务。
+- **流式处理 (SSE)**: 完美支持打字机效果，并支持在流式响应中注入自定义前缀（如 `<think>` 标签）。
+- **数据清洗**: 自动移除特定模型的思考过程标签，通过 `once_cell` 优化的正则引擎处理消息。
+- **审计日志**: 请求详情（Token消耗、延迟、IP）异步写入 SQLite 数据库，支持自动按月轮转归档。
 
 ## 🚀 快速部署 (Docker)
 
-这是最简单的部署方式。
-
-### 1. 创建配置文件
-
-在宿主机创建配置文件 `config.yaml`：
+### 1. 准备配置
+在宿主机创建 `config/config.yaml`：
 
 ```yaml
-# config/config.yaml
 openai_clients:
-  # 示例 1: 官方 OpenAI (高优先级)
-  - name: "official_openai"
-    api_key: "${OPENAI_API_KEY}" # 支持从环境变量读取
-    base_url: "https://api.openai.com/v1"
-    priority: 10
+  - name: "primary_gpt4"
+    api_key: "sk-xxxx"
+    base_url: "[https://api.openai.com/v1](https://api.openai.com/v1)"
     model_match:
       type: "keyword"
-      value: ["gpt-4", "gpt-3.5"]
-    fallback: "deepseek_backup"
+      value: ["gpt-4"]
+    priority: 10
+    fallback: "azure_backup"
 
-  # 示例 2: DeepSeek (自定义参数)
-  - name: "deepseek_service"
-    api_key: "sk-xxxxxxxx"
-    base_url: "https://api.deepseek.com"
+  - name: "azure_backup"
+    api_key: "azure-key"
+    base_url: "[https://azure-endpoint.com/v1](https://azure-endpoint.com/v1)"
+    model_match:
+      type: "exact"
+      value: ["gpt-4-backup"]
     priority: 1
-    model_match:
-      type: "exact"
-      value: ["deepseek-chat"]
-    special_prefix: "【DeepSeek 思考】\n" # 在响应前添加前缀
-    stop: ["<|endoftext|>"]
-
-  # 示例 3: 备用服务 (仅在故障时调用)
-  - name: "deepseek_backup"
-    api_key: "sk-yyyyyyyy"
-    base_url: "https://api.deepseek.com"
-    priority: 999
-    model_match:
-      type: "exact"
-      value: ["deepseek-chat-fallback"]
 ```
 
-### 2. 启动容器
-
-> **注意**: 建议挂载整个 `config` 目录而不是单个 `config.yaml` 文件，以确保配置文件的热重载功能（Hot-Reload）在各种编辑器和文件系统下都能稳定工作。
+### 2\. 启动服务
 
 ```bash
+
 docker run -d \
   --name openai-api \
   -p 8000:8000 \
-  -e RUST_LOG=warn \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
   ghcr.io/diannaojiang/openai-api:b153
 ```
 
-## 🛠️ 本地构建与开发
+## 🛠️ 本地编译与开发
 
 ### 环境要求
-- Rust 1.75+
-- Cargo
 
-### 编译与运行
+  - Rust 1.75+
+  - C 编译器 (gcc/clang)
+
+### 编译 Release 版本
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/diannaojiang/GPT_API.git
-cd GPT_API
-
-# 2. 编译 Release 版本
+# 通用编译
 cargo build --release
 
-# 3. 运行
-./target/release/gpt_api
+# 针对本机 CPU 极致优化 (推荐)
+RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
-程序默认会在当前目录下的 `config/config.yaml` 查找配置，在 `logs/` 目录写入日志和数据库。
+## 📖 API 接口
 
-## 📖 API 接口说明
-
-服务完全兼容 OpenAI API 规范。
+完全兼容 OpenAI API 规范：
 
 | 方法 | 路径 | 描述 |
 | :--- | :--- | :--- |
-| `POST` | `/v1/chat/completions` | 标准对话接口 (支持流式) |
-| `POST` | `/v1/completions` | 文本补全接口 (Legacy) |
-| `GET` | `/v1/models` | 获取所有可用模型列表 (聚合) |
-| `GET` | `/health` | 服务健康状态检查 |
+| `POST` | `/v1/chat/completions` | 对话接口 (支持流式) |
+| `POST` | `/v1/embeddings` | 向量化接口 |
+| `POST` | `/v1/audio/transcriptions` | 语音转文字 (Whisper) |
+| `GET` | `/v1/models` | 获取聚合模型列表 |
+| `GET` | `/health` | 健康检查 |
+
+## 📊 性能调优指南
+
+本项目已在代码层面做了深度优化，建议在部署时配置以下环境变量以发挥最大性能：
+
+  - **数据库轮转检查间隔**: `DB_ROTATION_CHECK_INTERVAL_SEC=60` (默认 60秒)
+  - **文件描述符限制**: 确保宿主机 `ulimit -n` 大于 65535。
+
 
 ---
 
-## 📂 项目结构
-
-```
-GPT_API/
-├── Cargo.toml              # Rust 项目依赖与配置
-├── Dockerfile              # 多架构构建脚本
-├── config/                 # 配置文件目录
-├── src/
-│   ├── main.rs             # 程序入口
-│   ├── client/             # 客户端管理与负载均衡逻辑
-│   ├── config/             # 配置热加载逻辑
-│   ├── db/                 # SQLite 数据库操作与轮转
-│   ├── handlers/           # HTTP 请求处理核心逻辑
-│   │   ├── chat_handler.rs # 聊天接口处理 (含 SSE 流式逻辑)
-│   │   └── utils.rs        # 消息清洗工具 (去重、标签移除等)
-│   ├── routes/             # API 路由定义
-│   └── state/              # 全局应用状态管理
-└── target/                 # 编译产物
-```
