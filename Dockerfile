@@ -9,8 +9,8 @@ COPY . .
 # 如果运行环境不支持这些指令集，程序将无法启动 (Illegal Instruction)
     ARG TARGETARCH
     RUN case "$TARGETARCH" in \
-          "amd64") export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=znver4" ;; \
-          "arm64") export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=tsv110" ;; \
+          "amd64") export RUSTFLAGS="-C target-cpu=x86-64-v4" ;; \
+          "arm64") export RUSTFLAGS="-C target-cpu=tsv110" ;; \
         esac && \
         cargo build --release
 # Runtime Stage
