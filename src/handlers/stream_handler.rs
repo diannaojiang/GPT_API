@@ -138,7 +138,10 @@ async fn stream_logger_task(
             captured_usage = Some(u.clone());
         } else if let Some(timings) = chunk.get("timings") {
             // llama.cpp timings format -> usage format
-            let prompt_n = timings.get("prompt_n").and_then(|v| v.as_i64()).unwrap_or(0);
+            let prompt_n = timings
+                .get("prompt_n")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let predicted_n = timings
                 .get("predicted_n")
                 .and_then(|v| v.as_i64())
@@ -242,8 +245,7 @@ pub async fn process_streaming_response(
         let mut resp = (status, Json(body_json)).into_response();
 
         if let Some(msg) = error_msg {
-            let log_body =
-                serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
+            let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
             resp.extensions_mut().insert(AccessLogMeta {
                 model: "-".to_string(),
                 error: Some(msg),
