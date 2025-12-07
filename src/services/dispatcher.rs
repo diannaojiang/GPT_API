@@ -55,6 +55,7 @@ impl DispatcherService {
         Fut: Future<Output = Result<Response, AppError>> + Send,
     {
         let mut current_model = initial_model.to_string();
+        let mut all_tried_clients = Vec::new();
 
         // 主循环：处理故障转移 (Fallback)
         // 当所有客户端都失败且定义了 fallback 模型时，更新 current_model 并重新开始循环
@@ -65,18 +66,27 @@ impl DispatcherService {
                 Err(e) => return e.into_response(),
             };
 
-            let matching_client_names: Vec<String> =
-                clients.iter().map(|c| c.name.clone()).collect();
-
             // 2. 尝试执行客户端链
             // 这个内部循环尝试当前模型对应的所有可用客户端（负载均衡结果）
             let execution_result = self
-                .execute_client_chain(&clients, &current_model, &mut request_callback)
+                .execute_client_chain(
+                    &clients,
+                    &current_model,
+                    &mut request_callback,
+                    &mut all_tried_clients,
+                )
                 .await;
 
             match execution_result {
                 // 成功获得响应（包括 4xx 客户端错误，这些被视为业务成功处理）
-                Ok(response) => return response,
+                Ok(mut response) => {
+                    if let Some(meta) = response.extensions_mut().get_mut::<AccessLogMeta>() {
+                        if let Some(err_msg) = &mut meta.error {
+                            *err_msg = format!("{} (Tried: {:?})", err_msg, all_tried_clients);
+                        }
+                    }
+                    return response;
+                }
 
                 // 触发了 Fallback
                 Err(Some(fallback_model)) => {
@@ -92,7 +102,7 @@ impl DispatcherService {
                 Err(None) => {
                     let error_message = format!(
                         "All upstream providers failed for model '{}'. Tried clients: {:?}",
-                        current_model, matching_client_names
+                        current_model, all_tried_clients
                     );
                     warn!("{}", error_message);
 
@@ -117,16 +127,16 @@ impl DispatcherService {
         clients: &[ClientConfig],
         model_name: &str,
         request_callback: &mut F,
+        tried_clients_accumulator: &mut Vec<String>,
     ) -> Result<Response, Option<String>>
     where
         F: FnMut(&ClientConfig, &str) -> Fut + Send,
         Fut: Future<Output = Result<Response, AppError>> + Send,
     {
         let mut last_response: Option<Response> = None;
-        let mut tried_clients = Vec::new();
 
         for client_config in clients {
-            tried_clients.push(client_config.name.clone());
+            tried_clients_accumulator.push(client_config.name.clone());
             debug!("Dispatching request to client: {}", client_config.name);
 
             // 调用回调函数执行实际请求
@@ -197,19 +207,15 @@ impl DispatcherService {
 
         // 如果循环结束还没有返回 Ok，说明所有客户端都失败了
         if let Some(mut resp) = last_response {
-            // 返回最后一个失败的响应，并追加尝试过的客户端列表
+            // 返回最后一个失败的响应
             if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
                 meta.model = model_name.to_string();
-                if let Some(err_msg) = &mut meta.error {
-                    *err_msg = format!("{} (Tried: {:?})", err_msg, tried_clients);
-                }
             } else {
                 resp.extensions_mut().insert(AccessLogMeta {
                     model: model_name.to_string(),
-                    error: Some(format!(
-                        "All upstream providers failed. Tried: {:?}",
-                        tried_clients
-                    )),
+                    error: Some(
+                        "All upstream providers failed (forwarding last error)".to_string(),
+                    ),
                     request_body: None,
                 });
             }

@@ -109,7 +109,16 @@ async fn dispatch_request(
     let response = build_and_send_request(app_state, client_config, &api_key, &url, &request_body)
         .await
         .map_err(|e| match e.downcast::<reqwest::Error>() {
-            Ok(req_err) => AppError::from(*req_err),
+            Ok(req_err) => {
+                let error_text = if req_err.is_timeout() {
+                    "Request timed out"
+                } else if req_err.is_connect() {
+                    "Failed to connect to host"
+                } else {
+                    "External request failed"
+                };
+                AppError::InternalServerError(error_text.to_string())
+            }
             Err(original_err) => AppError::InternalServerError(original_err.to_string()),
         })?;
 
