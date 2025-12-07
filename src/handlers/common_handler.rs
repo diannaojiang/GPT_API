@@ -45,7 +45,7 @@ pub async fn handle_request_logic(
 
     let initial_model = payload.get_model().to_string();
 
-    app_state
+    let mut response = app_state
         .dispatcher_service
         .execute(&initial_model, |client_config, model_name| {
             // 每次重试可能针对不同的模型（fallback），因此需要更新 payload 中的 model
@@ -63,7 +63,21 @@ pub async fn handle_request_logic(
                 dispatch_request(&app_state, &headers, addr, &current_payload, &client_config).await
             }
         })
-        .await
+        .await;
+
+    // 如果响应中包含日志元数据但缺少 request_body（通常发生在所有上游都失败时），
+    // 在此处补全 request_body 以便记录日志。
+    if let Some(meta) = response.extensions_mut().get_mut::<AccessLogMeta>() {
+        if meta.request_body.is_none() {
+            let payload_value = serde_json::to_value(&payload)
+                .unwrap_or(json!({"error": "failed to serialize payload"}));
+            let log_body =
+                serde_json::to_string(&truncate_json(&payload_value)).unwrap_or_default();
+            meta.request_body = Some(log_body);
+        }
+    }
+
+    response
 }
 
 /// 统一的请求派发函数

@@ -123,8 +123,10 @@ impl DispatcherService {
         Fut: Future<Output = Result<Response, AppError>> + Send,
     {
         let mut last_response: Option<Response> = None;
+        let mut tried_clients = Vec::new();
 
         for client_config in clients {
+            tried_clients.push(client_config.name.clone());
             debug!("Dispatching request to client: {}", client_config.name);
 
             // 调用回调函数执行实际请求
@@ -195,15 +197,19 @@ impl DispatcherService {
 
         // 如果循环结束还没有返回 Ok，说明所有客户端都失败了
         if let Some(mut resp) = last_response {
-            // 返回最后一个失败的响应
+            // 返回最后一个失败的响应，并追加尝试过的客户端列表
             if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
                 meta.model = model_name.to_string();
+                if let Some(err_msg) = &mut meta.error {
+                    *err_msg = format!("{} (Tried: {:?})", err_msg, tried_clients);
+                }
             } else {
                 resp.extensions_mut().insert(AccessLogMeta {
                     model: model_name.to_string(),
-                    error: Some(
-                        "All upstream providers failed (forwarding last error)".to_string(),
-                    ),
+                    error: Some(format!(
+                        "All upstream providers failed. Tried: {:?}",
+                        tried_clients
+                    )),
                     request_body: None,
                 });
             }
