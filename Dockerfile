@@ -9,7 +9,7 @@ COPY . .
 # 如果运行环境不支持这些指令集，程序将无法启动 (Illegal Instruction)
     ARG TARGETARCH
     RUN case "$TARGETARCH" in \
-          "amd64") export RUSTFLAGS="-C target-cpu=x86-64-v4" ;; \
+          "amd64") export RUSTFLAGS="-C target-cpu=x86-64-v3" ;; \
           "arm64") export RUSTFLAGS="-C target-cpu=tsv110" ;; \
         esac && \
         cargo build --release
