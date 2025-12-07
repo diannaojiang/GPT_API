@@ -201,7 +201,18 @@ async fn dispatch_request(
     // 核心修改：检查是否应该进入流式处理
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
     if payload.is_streaming() {
-        process_streaming_response(response, client_config, is_chat, &request_body).await
+        let client_ip = get_client_ip(headers, addr);
+        process_streaming_response(
+            app_state.clone(),
+            headers.clone(),
+            payload.clone(),
+            client_ip,
+            response,
+            client_config,
+            is_chat,
+            &request_body,
+        )
+        .await
     } else {
         process_non_streaming_response(
             app_state,

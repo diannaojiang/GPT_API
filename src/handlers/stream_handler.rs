@@ -1,8 +1,12 @@
 use crate::app_error::AppError;
 use crate::config::types::ClientConfig;
+use crate::db::records::log_non_streaming_request;
 use crate::handlers::utils::truncate_json;
+use crate::models::requests::RequestPayload;
 use crate::models::AccessLogMeta;
+use crate::state::app_state::AppState;
 use axum::{
+    http::HeaderMap,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -12,9 +16,107 @@ use axum::{
 use eventsource_stream::Eventsource;
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use tracing::error;
 
+async fn stream_logger_task(
+    mut rx: mpsc::UnboundedReceiver<Value>,
+    app_state: Arc<AppState>,
+    headers: HeaderMap,
+    payload: RequestPayload,
+    request_body: Value,
+    client_ip: String,
+    is_chat: bool,
+) {
+    let mut full_content = String::new();
+    let mut last_chunk: Option<Value> = None;
+    let mut first_chunk: Option<Value> = None;
+    let mut role = "assistant".to_string();
+
+    while let Some(chunk) = rx.recv().await {
+        if first_chunk.is_none() {
+            first_chunk = Some(chunk.clone());
+            // Try extract role from first chunk (often present)
+            if is_chat {
+                if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+                    if let Some(choice) = choices.first() {
+                        if let Some(delta) = choice.get("delta") {
+                            if let Some(r) = delta.get("role").and_then(|s| s.as_str()) {
+                                role = r.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        last_chunk = Some(chunk.clone());
+
+        // Accumulate content
+        if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+            if let Some(choice) = choices.first() {
+                if is_chat {
+                    if let Some(delta) = choice.get("delta") {
+                        if let Some(content) = delta.get("content").and_then(|s| s.as_str()) {
+                            full_content.push_str(content);
+                        }
+                    }
+                } else {
+                    if let Some(text) = choice.get("text").and_then(|s| s.as_str()) {
+                        full_content.push_str(text);
+                    }
+                }
+            }
+        }
+    }
+
+    // Construct full response body
+    if let Some(mut final_chunk) = last_chunk {
+        // If it's empty (e.g. only one chunk), fallback to first_chunk or mock
+        if final_chunk.get("choices").is_none() {
+            if let Some(first) = first_chunk {
+                final_chunk = first;
+            }
+        }
+
+        // Ensure 'choices' exists
+        if final_chunk.get("choices").is_none() {
+            final_chunk["choices"] = json!([{ "index": 0 }]);
+        }
+
+        if is_chat {
+            // Set message
+            final_chunk["choices"][0]["message"] = json!({
+                "role": role,
+                "content": full_content
+            });
+            // Remove delta if present
+            if let Some(choice) = final_chunk["choices"][0].as_object_mut() {
+                choice.remove("delta");
+            }
+        } else {
+            // Set text
+            final_chunk["choices"][0]["text"] = json!(full_content);
+        }
+
+        // Log it
+        log_non_streaming_request(
+            &app_state,
+            &headers,
+            &payload,
+            &request_body,
+            &final_chunk,
+            client_ip,
+        )
+        .await;
+    }
+}
+
 pub async fn process_streaming_response(
+    app_state: Arc<AppState>,
+    headers: HeaderMap,
+    payload: RequestPayload,
+    client_ip: String,
     response: reqwest::Response,
     client_config: &ClientConfig,
     is_chat: bool,
@@ -39,7 +141,8 @@ pub async fn process_streaming_response(
         let mut resp = (status, Json(body_json)).into_response();
 
         if let Some(msg) = error_msg {
-            let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
+            let log_body =
+                serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
             resp.extensions_mut().insert(AccessLogMeta {
                 model: "-".to_string(),
                 error: Some(msg),
@@ -52,6 +155,27 @@ pub async fn process_streaming_response(
     let stream = response.bytes_stream();
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
+
+    // Setup logger channel
+    let (tx, rx) = mpsc::unbounded_channel::<Value>();
+    let app_state_clone = app_state.clone();
+    let headers_clone = headers.clone();
+    let payload_clone = payload.clone();
+    let request_body_clone = request_body.clone();
+    let client_ip_clone = client_ip.clone();
+
+    tokio::spawn(async move {
+        stream_logger_task(
+            rx,
+            app_state_clone,
+            headers_clone,
+            payload_clone,
+            request_body_clone,
+            client_ip_clone,
+            is_chat,
+        )
+        .await;
+    });
 
     let content_json_pointer = if is_chat {
         "/choices/0/delta/content"
@@ -82,6 +206,11 @@ pub async fn process_streaming_response(
                             }
                         }
                     }
+
+                    // Send clone to logger task
+                    // Ignore send errors (e.g. logger task panics/drops)
+                    let _ = tx.send(value.clone());
+
                     // 使用 simd_json 序列化回字符串
                     Ok(Event::default().data(simd_json::to_string(&value).unwrap_or_default()))
                 } else {
