@@ -124,6 +124,8 @@ async fn stream_logger_task(
     let mut accumulator = StreamAccumulator::new();
     let mut last_chunk: Option<Value> = None;
     let mut first_chunk: Option<Value> = None;
+    let mut captured_usage: Option<Value> = None;
+    let mut captured_finish_reason: Option<String> = None;
 
     while let Some(chunk) = rx.recv().await {
         if first_chunk.is_none() {
@@ -131,8 +133,18 @@ async fn stream_logger_task(
         }
         last_chunk = Some(chunk.clone());
 
+        // Capture Usage (often in the last chunk)
+        if let Some(u) = chunk.get("usage") {
+            captured_usage = Some(u.clone());
+        }
+
         if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
+                // Capture Finish Reason
+                if let Some(fr) = choice.get("finish_reason").and_then(|s| s.as_str()) {
+                    captured_finish_reason = Some(fr.to_string());
+                }
+
                 if is_chat {
                     if let Some(delta) = choice.get("delta") {
                         accumulator.update(delta);
@@ -145,15 +157,18 @@ async fn stream_logger_task(
     }
 
     if let Some(mut final_chunk) = last_chunk {
+        // If last chunk has no choices (e.g. usage chunk), fallback to first chunk for structure
         if final_chunk.get("choices").is_none() {
             if let Some(first) = first_chunk {
                 final_chunk = first;
             }
         }
+        // Ensure choices exists
         if final_chunk.get("choices").is_none() {
             final_chunk["choices"] = json!([{ "index": 0 }]);
         }
 
+        // Inject accumulated content
         if is_chat {
             final_chunk["choices"][0]["message"] = accumulator.to_message_json();
             if let Some(choice) = final_chunk["choices"][0].as_object_mut() {
@@ -161,6 +176,16 @@ async fn stream_logger_task(
             }
         } else {
             final_chunk["choices"][0]["text"] = json!(accumulator.content);
+        }
+
+        // Inject captured Usage and Finish Reason
+        if let Some(u) = captured_usage {
+            final_chunk["usage"] = u;
+        }
+        if let Some(fr) = captured_finish_reason {
+            if let Some(choice) = final_chunk["choices"][0].as_object_mut() {
+                choice.insert("finish_reason".to_string(), json!(fr));
+            }
         }
 
         log_non_streaming_request(
