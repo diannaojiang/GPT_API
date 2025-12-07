@@ -75,6 +75,7 @@ fn main() {
         // Listen on IPv6 "any" address (::), which generally also supports IPv4 (dual-stack)
         let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
         let listener = TcpListener::bind(addr).await.unwrap();
+        println!("listening on {}", addr);
         tracing::info!("listening on {}", addr);
         axum::serve(
             listener,
