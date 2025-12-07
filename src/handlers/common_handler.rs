@@ -2,7 +2,7 @@ use crate::app_error::AppError;
 use crate::models::AccessLogMeta;
 use axum::{
     extract::State,
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -40,6 +40,35 @@ pub async fn handle_request_logic(
     addr: Option<SocketAddr>,
     mut payload: RequestPayload,
 ) -> Response {
+    // 1. 输入验证
+    match &payload {
+        RequestPayload::Chat(p) => {
+            if p.messages.is_empty() {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param messages not arr or arr is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        RequestPayload::Completion(p) => {
+            if p.prompt.is_empty() {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param prompt is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        _ => {}
+    }
+
     // 对 Chat 请求，预处理 messages
     prepare_chat_request(&mut payload);
 
