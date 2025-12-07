@@ -48,8 +48,7 @@ fn create_validation_error(msg: &str, payload: &RequestPayload) -> Response {
         "error_type": "Input Validation Error"
     });
 
-    let mut response =
-        (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
+    let mut response = (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
 
     // Serialize payload for logging
     let payload_value =
