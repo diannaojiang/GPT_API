@@ -173,14 +173,21 @@ async fn stream_logger_task(
     }
 
     if let Some(mut final_chunk) = last_chunk {
-        // If last chunk has no choices (e.g. usage chunk), fallback to first chunk for structure
+        // If it's empty (e.g. only one chunk), fallback to first_chunk or mock
         if final_chunk.get("choices").is_none() {
             if let Some(first) = first_chunk {
                 final_chunk = first;
             }
         }
-        // Ensure choices exists
-        if final_chunk.get("choices").is_none() {
+
+        // Ensure 'choices' exists AND is not empty
+        let choices_valid = final_chunk
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(false);
+
+        if !choices_valid {
             final_chunk["choices"] = json!([{ "index": 0 }]);
         }
 
