@@ -27,7 +27,8 @@ pub async fn init_db_pool(_config: &Config) -> Result<SqlitePool, sqlx::Error> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS records (
-            Time TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Time TEXT,
             IP TEXT,
             Model TEXT,
             Type TEXT,
