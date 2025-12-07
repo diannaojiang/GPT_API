@@ -136,6 +136,19 @@ async fn stream_logger_task(
         // Capture Usage (often in the last chunk)
         if let Some(u) = chunk.get("usage") {
             captured_usage = Some(u.clone());
+        } else if let Some(timings) = chunk.get("timings") {
+            // llama.cpp timings format -> usage format
+            let prompt_n = timings.get("prompt_n").and_then(|v| v.as_i64()).unwrap_or(0);
+            let predicted_n = timings
+                .get("predicted_n")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            captured_usage = Some(json!({
+                "prompt_tokens": prompt_n,
+                "completion_tokens": predicted_n,
+                "total_tokens": prompt_n + predicted_n
+            }));
         }
 
         if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {

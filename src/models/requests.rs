@@ -92,6 +92,8 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_template_kwargs: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<Value>,
     // Add other fields as needed
 }
 
@@ -107,6 +109,8 @@ pub struct CompletionRequest {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<Value>,
     // Add other fields as needed
 }
 

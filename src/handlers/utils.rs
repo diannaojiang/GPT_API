@@ -209,6 +209,13 @@ pub fn build_request_body_generic(
             if let Some(kwargs) = &p.chat_template_kwargs {
                 body["chat_template_kwargs"] = kwargs.clone();
             }
+            if stream {
+                if let Some(opts) = &p.stream_options {
+                    body["stream_options"] = opts.clone();
+                } else {
+                    body["stream_options"] = json!({"include_usage": true});
+                }
+            }
             body
         }
         RequestPayload::Completion(p) => {
@@ -229,6 +236,13 @@ pub fn build_request_body_generic(
             }
             if let Some(stop) = merged_stop {
                 body["stop"] = json!(stop);
+            }
+            if stream {
+                if let Some(opts) = &p.stream_options {
+                    body["stream_options"] = opts.clone();
+                } else {
+                    body["stream_options"] = json!({"include_usage": true});
+                }
             }
             body
         }
