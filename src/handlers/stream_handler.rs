@@ -16,9 +16,101 @@ use axum::{
 use eventsource_stream::Eventsource;
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
+
+struct ToolCallAccumulator {
+    index: u64,
+    id: Option<String>,
+    r#type: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+struct StreamAccumulator {
+    content: String,
+    reasoning_content: String,
+    role: String,
+    tool_calls: HashMap<u64, ToolCallAccumulator>,
+}
+
+impl StreamAccumulator {
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            reasoning_content: String::new(),
+            role: "assistant".to_string(),
+            tool_calls: HashMap::new(),
+        }
+    }
+
+    fn update(&mut self, delta: &Value) {
+        if let Some(r) = delta.get("role").and_then(|s| s.as_str()) {
+            self.role = r.to_string();
+        }
+        if let Some(c) = delta.get("content").and_then(|s| s.as_str()) {
+            self.content.push_str(c);
+        }
+        if let Some(rc) = delta.get("reasoning_content").and_then(|s| s.as_str()) {
+            self.reasoning_content.push_str(rc);
+        }
+        if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tcs {
+                if let Some(index) = tc.get("index").and_then(|i| i.as_u64()) {
+                    let acc = self.tool_calls.entry(index).or_insert(ToolCallAccumulator {
+                        index,
+                        id: None,
+                        r#type: None,
+                        name: None,
+                        arguments: String::new(),
+                    });
+                    if let Some(id) = tc.get("id").and_then(|s| s.as_str()) {
+                        acc.id = Some(id.to_string());
+                    }
+                    if let Some(t) = tc.get("type").and_then(|s| s.as_str()) {
+                        acc.r#type = Some(t.to_string());
+                    }
+                    if let Some(func) = tc.get("function") {
+                        if let Some(name) = func.get("name").and_then(|s| s.as_str()) {
+                            acc.name = Some(name.to_string());
+                        }
+                        if let Some(args) = func.get("arguments").and_then(|s| s.as_str()) {
+                            acc.arguments.push_str(args);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn to_message_json(&self) -> Value {
+        let mut msg = json!({ "role": self.role });
+        if !self.content.is_empty() {
+            msg["content"] = json!(self.content);
+        }
+        if !self.reasoning_content.is_empty() {
+            msg["reasoning_content"] = json!(self.reasoning_content);
+        }
+        if !self.tool_calls.is_empty() {
+            let mut tcs: Vec<_> = self.tool_calls.values().collect();
+            tcs.sort_by_key(|tc| tc.index);
+            let tool_calls_json: Vec<Value> = tcs
+                .iter()
+                .map(|tc| {
+                    json!({
+                        "id": tc.id,
+                        "type": tc.r#type.clone().unwrap_or_else(|| "function".to_string()),
+                        "function": { "name": tc.name, "arguments": tc.arguments }
+                    })
+                })
+                .collect();
+            msg["tool_calls"] = json!(tool_calls_json);
+        }
+        msg
+    }
+}
 
 async fn stream_logger_task(
     mut rx: mpsc::UnboundedReceiver<Value>,
@@ -29,77 +121,48 @@ async fn stream_logger_task(
     client_ip: String,
     is_chat: bool,
 ) {
-    let mut full_content = String::new();
+    let mut accumulator = StreamAccumulator::new();
     let mut last_chunk: Option<Value> = None;
     let mut first_chunk: Option<Value> = None;
-    let mut role = "assistant".to_string();
 
     while let Some(chunk) = rx.recv().await {
         if first_chunk.is_none() {
             first_chunk = Some(chunk.clone());
-            // Try extract role from first chunk (often present)
-            if is_chat {
-                if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
-                    if let Some(choice) = choices.first() {
-                        if let Some(delta) = choice.get("delta") {
-                            if let Some(r) = delta.get("role").and_then(|s| s.as_str()) {
-                                role = r.to_string();
-                            }
-                        }
-                    }
-                }
-            }
         }
         last_chunk = Some(chunk.clone());
 
-        // Accumulate content
         if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
                 if is_chat {
                     if let Some(delta) = choice.get("delta") {
-                        if let Some(content) = delta.get("content").and_then(|s| s.as_str()) {
-                            full_content.push_str(content);
-                        }
+                        accumulator.update(delta);
                     }
-                } else {
-                    if let Some(text) = choice.get("text").and_then(|s| s.as_str()) {
-                        full_content.push_str(text);
-                    }
+                } else if let Some(text) = choice.get("text").and_then(|s| s.as_str()) {
+                    accumulator.content.push_str(text);
                 }
             }
         }
     }
 
-    // Construct full response body
     if let Some(mut final_chunk) = last_chunk {
-        // If it's empty (e.g. only one chunk), fallback to first_chunk or mock
         if final_chunk.get("choices").is_none() {
             if let Some(first) = first_chunk {
                 final_chunk = first;
             }
         }
-
-        // Ensure 'choices' exists
         if final_chunk.get("choices").is_none() {
             final_chunk["choices"] = json!([{ "index": 0 }]);
         }
 
         if is_chat {
-            // Set message
-            final_chunk["choices"][0]["message"] = json!({
-                "role": role,
-                "content": full_content
-            });
-            // Remove delta if present
+            final_chunk["choices"][0]["message"] = accumulator.to_message_json();
             if let Some(choice) = final_chunk["choices"][0].as_object_mut() {
                 choice.remove("delta");
             }
         } else {
-            // Set text
-            final_chunk["choices"][0]["text"] = json!(full_content);
+            final_chunk["choices"][0]["text"] = json!(accumulator.content);
         }
 
-        // Log it
         log_non_streaming_request(
             &app_state,
             &headers,
