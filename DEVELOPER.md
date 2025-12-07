@@ -1,143 +1,91 @@
-## 第二部分：项目开发文档 (DEVELOPER.md)
-
-这份文档旨在帮助新加入的开发者快速理解 `GPT_API` 的代码结构、核心逻辑以及优化细节。
-
----
-
 # GPT_API 开发者指南
 
-## 1. 架构概览
+## 1. 架构深度解析
 
-GPT_API 采用分层架构设计，实现了关注点分离：
+GPT_API 采用基于 Tokio 的全异步、无锁分层架构设计，旨在实现极致的吞吐量和低延迟。
 
-1.  **Routes Layer (`src/routes`)**: 这里的代码非常薄，仅负责 HTTP 请求的参数提取（Extractors）和类型校验。
-2.  **Handlers Layer (`src/handlers`)**: 处理具体的业务逻辑（如 JSON 预处理、流式转换），但不包含路由决策。
-3.  **Service Layer (`src/services`)**: **核心层**。`DispatcherService` 负责负载均衡、节点选择和故障转移循环。
-4.  **Client Layer (`src/client`)**: 负责 HTTP 连接池管理和实际的网络 IO。
-5.  **State Layer (`src/state`)**: 管理全局共享状态（配置、数据库连接池、服务实例）。
+### 1.1 核心组件交互
 
-### 数据流向图
 ```text
-Request -> [Router] -> [Handler (Common/Audio)] 
+Request -> [Axum Router] 
              |
              v
-      [Dispatcher Service] <--(Reads Config)-- [Config Manager]
+      [DispatcherService] (负载均衡与故障转移)
              |
-        (Load Balance)
+             +---> [CommonHandler] (非流式请求 / Embedding / Rerank)
+             |          |
+             |          +--> [ClientManager] -> [Upstream]
+             |          |
+             |          +--> [Database Logger] (SQLx Pool)
              |
-             v
-      [Client Manager] --(HTTP/Stream)--> [Upstream API]
+             +---> [StreamHandler] (SSE 流式请求)
+                        |
+                        +--> [ClientManager] -> [Upstream]
+                        |
+                        +--> [Non-blocking Stream Processor] (mpsc channel)
+                                    |
+                                    v
+                             [Stream Logger Task] -> [Database Logger]
 ```
 
-## 2\. 目录结构解析
+### 1.2 关键模块设计
 
-```bash
-src/
-├── main.rs                 # 程序入口，初始化日志、配置、数据库、mimalloc 和 HTTP Server
-├── lib.rs                  # 模块导出定义
-├── app_error.rs            # 全局错误处理 (统一转为 JSON Response)
-├── client/                 # HTTP 客户端层
-│   ├── client_manager.rs   # Reqwest Client 初始化 (KeepAlive, Timeout)
-│   ├── proxy.rs            # 构建具体 Request (Header/Body 转发)
-│   └── routing.rs          # 权重选择算法 (Weighted Round-Robin 变体)
-├── config/                 # 配置管理层
-│   ├── config_manager.rs   # 实现基于 notify 的配置文件热重载
-│   └── types.rs            # 配置结构体定义
-├── db/                     # 持久化层
-│   ├── mod.rs              # SQLite 连接池初始化与文件轮转逻辑
-│   └── records.rs          # 日志结构体定义与 Insert 操作
-├── handlers/               # 业务处理层
-│   ├── common_handler.rs   # 通用请求处理入口 (Chat/Completions/Embeddings)
-│   ├── audio_handler.rs    # 音频专用处理 (Multipart Form 重组与缓存)
-│   ├── stream_handler.rs   # SSE 流式响应解析 (使用 simd-json)
-│   └── utils.rs            # 工具函数 (IP提取、正则清洗、JSON 转换)
-├── middleware/             # Axum 中间件 (Access Log)
-├── models/                 # 请求/响应数据模型 (RequestPayload Enum)
-├── routes/                 # 路由定义 (Controller)
-├── services/               # 核心服务层
-│   └── dispatcher.rs       # 封装了 Retry/Fallback 逻辑的统一调度器
-└── state/                  # AppState 定义
-```
+#### 1.2.1 DispatcherService (调度层)
+- **职责**: 负责所有请求的路由决策、负载均衡权重计算、以及最重要的 **Failover (故障转移)** 循环。
+- **逻辑**: 采用责任链模式。如果一个上游节点返回 5xx 错误或连接超时，Dispatcher 会自动捕获错误，根据配置查找 Fallback 模型，并无缝重试，直到成功或所有备选方案耗尽。
+- **日志一致性**: 无论重试多少次，最终返回给客户端的错误信息会包含完整的重试路径 (`Tried: ["A", "B"]`)，并确保与服务端 Access Log 完全一致。
 
-## 3\. 核心模块深度解析
+#### 1.2.2 StreamHandler (流式处理层)
+这是系统的性能热点区域。我们采用了一种**读写分离**的架构来处理 SSE 流：
 
-### 3.1 统一调度器 (`services/dispatcher.rs`)
+- **主路径 (Hot Path)**: 负责将上游的 SSE 数据包透传给下游客户端。
+    - **优化**: 使用 `String` 传递数据而非 `serde_json::Value`，避免了昂贵的 Deep Clone 操作。
+    - **延迟**: 主路径仅做最少的必要处理（如前缀注入），确保 TTFT (Time To First Token) 极低。
+- **后台日志任务 (Background Task)**:
+    - 通过 `mpsc::unbounded_channel` 接收数据副本。
+    - 在独立的 Tokio Task 中进行 JSON 反序列化、内容累积、Token Usage 统计和工具调用合并。
+    - 这种设计将繁重的计算任务移出了关键路径。
 
-这是系统的“大脑”。为了解耦业务逻辑与路由逻辑，我们设计了 `DispatcherService`。
+## 2. 构建系统与优化
 
-  * **设计模式**: 策略模式 + 责任链模式的变体。
-  * **关键方法**: `execute<F, Fut>(&self, initial_model, request_callback)`
-  * **工作原理**:
-    1.  接受一个 `request_callback` 闭包（负责发送实际请求）。
-    2.  根据 `initial_model` 查找可用后端列表。
-    3.  执行负载均衡。
-    4.  在一个 `loop` 中尝试调用后端。
-    5.  如果失败（5xx错误），自动查找 `fallback` 模型并**更新当前模型名称**，进入下一次循环。
-    6.  如果成功，直接返回 Response。
+### 2.1 CPU 指令集优化
+为了在现代云服务器上获得最佳性能，同时保证兼容性，我们制定了明确的编译策略：
 
-### 3.2 高性能流式处理 (`handlers/stream_handler.rs`)
+- **x86-64-v3 (AVX2)**: 这是 Docker 镜像的默认目标。它在绝大多数现代服务器（Haswell 及以上）上支持 AVX2 指令集，能显著加速 `simd-json` 的性能。
+    - *注意*: 我们不默认使用 `v4` (AVX-512)，因为部分 CI Runner (如 GitHub Actions) 并不支持，会导致构建过程中的 proc-macro 崩溃 (`SIGILL`)。
+- **tsv110 (ARM64)**: 针对鲲鹏 920 等高性能 ARM 服务器优化。
 
-针对 OpenAI 的 SSE (Server-Sent Events) 响应，我们进行了极致优化。
+### 2.2 内存分配器
+项目默认链接 `mimalloc`。在 Rust 的异步高并发场景下，`mimalloc` 能有效减少内存碎片，并降低多线程下的分配器锁竞争，相比 `glibc` malloc 有约 10%-30% 的性能提升。
 
-  * **simd-json**: 我们使用 `simd_json::from_str` 替代标准的 `serde_json` 来解析每一个 Event 数据块。
-  * **Zero-Copy (尽力)**: 在处理 SSE 事件时，直接操作字节切片，仅在需要注入 `special_prefix` 时才进行 JSON 修改。
+## 3. 测试与验证
 
-### 3.3 音频处理与重试 (`handlers/audio_handler.rs`)
-
-`Multipart/form-data` 的重试是一个难点，因为 Stream 只能被消费一次。
-
-  * **解决方案**: 定义了 `CachedPart` 结构体。
-  * **逻辑**: 在 Handler 入口处将上传的文件流（Bytes）读取到内存中暂存。这使得在 `DispatcherService` 触发 Fallback 重试时，我们能够重新构建 `reqwest::multipart::Form` 发送给备用节点。
-  * *注意*: 目前在大文件上传时可能会有内存压力，建议在反向代理层限制上传大小。
-
-### 3.4 动态正则优化 (`handlers/utils.rs`)
-
-为了处理 DeepSeek 等模型的 `<think>` 标签，我们使用了正则表达式。
-
-  * **优化**: 使用 `once_cell::sync::Lazy` 声明全局静态 `Regex` 对象。
-  * **收益**: 避免了在每次 HTTP 请求中重新编译正则表达式的昂贵开销（约节省 0.5ms - 2ms CPU 时间）。
-
-## 4\. 性能优化细节
-
-本项目在 Rust 代码层面集成了多项优化，参与开发时请务必保持这些特性：
-
-1.  **全局内存分配器 (Mimalloc)**:
-    在 `main.rs` 中配置了 `#[global_allocator]`。Mimalloc 在高并发小对象分配（如 JSON 处理）场景下性能远超系统默认的 malloc。
-
-2.  **SIMD JSON**:
-    所有涉及 JSON 解析的热点路径（尤其是 Response Body 解析）都使用了 `simd-json`。这利用了 CPU 的向量指令集（AVX2/NEON）。
-
-3.  **异步日志**:
-    日志写入操作通过 `tokio::spawn` 移交后台任务执行，不阻塞主请求线程返回 Response。
-
-## 5\. 开发工作流
-
-### 环境准备
-
-确保安装了 Rust 工具链。
+我们提供了一个增强型的测试运行器 `GPT_API_TESTS/test_runner_enhanced.py`，它集成了 Mock Server、数据库验证和性能基准测试。
 
 ### 运行测试
 
-```bash
-# 运行所有单元测试
-cargo test
-
-# 运行特定模块测试
-cargo test client::routing
-```
-
-### 代码格式化
-
-提交代码前请务必运行：
+必须在虚拟环境中运行：
 
 ```bash
-cargo fmt
-cargo clippy -- -D warnings
+# 1. 激活环境
+source GPT_API_TESTS/.venv/bin/activate
+
+# 2. 运行全量测试 (推荐)
+python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage all
+
+# 3. 仅运行特定阶段
+python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage phase1 # 基础功能
+python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage phase4 # 性能压测
 ```
 
-### 添加新的 API 类型
+### 测试阶段说明
+- **Phase 1**: 基础功能验证（Chat, Completion, Embedding, Input Validation, Logging）。
+- **Phase 2**: 端到端流程验证（数据库记录完整性）。
+- **Phase 3**: 负载均衡与权重分配验证。
+- **Phase 4**: 性能基准测试 (RPS/Latency)。
 
-1.  在 `src/models/requests.rs` 的 `RequestPayload`枚举中添加新变体。
-2.  在 `src/handlers/utils.rs` 的 `build_request_body_generic` 中添加构建逻辑。
-3.  在 `src/handlers/common_handler.rs` 的 `dispatch_request` 中添加 endpoint 映射。
-4.  在 `src/routes` 添加路由定义。
+## 4. 开发规范
+
+1.  **提交前检查**: 必须运行 `cargo fmt` 和 `cargo build --release`。
+2.  **新增依赖**: 引入新 crate 需谨慎，必须检查其对编译体积和启动速度的影响。
+3.  **错误处理**: 所有网关层生成的错误必须使用 `AppError` 统一定义，并确保 Log 和 Response Body 内容一致。
