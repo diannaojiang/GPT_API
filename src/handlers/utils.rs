@@ -337,11 +337,13 @@ where
                 // 3. 失败处理：记录日志元数据
                 let error_message = e.to_string();
                 // 将 bytes 转换为 string (lossy) 以便记录日志
-                // 注意：buf 已经被 from_slice 修改了，但对于打印错误日志来说通常还可以辨认
                 let body_str = String::from_utf8_lossy(&bytes).to_string();
 
+                // 统一错误消息
+                let final_error_msg = format!("Request body validation failed: {}", error_message);
+
                 let error_response = json!({
-                    "error": format!("Request body validation failed: {}", error_message),
+                    "error": final_error_msg,
                     "error_type": "InvalidRequest"
                 });
 
@@ -351,7 +353,7 @@ where
                 // 注入 AccessLogMeta 到 Response extensions
                 response.extensions_mut().insert(AccessLogMeta {
                     model: "-".to_string(), // 解析失败，无法获知 model
-                    error: Some(format!("JSON Error: {}", error_message)),
+                    error: Some(final_error_msg),
                     request_body: Some(body_str),
                 });
 
