@@ -25,11 +25,13 @@ fn main() {
         // 配置自定义的日志系统 (File + Console)
         let log_config = gpt_api::logging::LogConfig::default();
         let _guards = gpt_api::logging::init_logging(log_config);
+        println!("Logging initialized.");
 
         // Load configuration
         let config_manager = config::config_manager::ConfigManager::new("config/config.yaml")
             .await
             .expect("Failed to load configuration");
+        println!("Configuration loaded.");
 
         let config_manager = Arc::new(config_manager);
 
@@ -41,8 +43,10 @@ fn main() {
         let db_pool = init_db_pool(&config)
             .await
             .expect("Failed to initialize database pool");
+        println!("Database pool initialized.");
 
         let app_state = Arc::new(AppState::new(config_manager, client_manager, db_pool));
+        println!("Application state initialized.");
 
         // Add a small delay to ensure the database is fully initialized on disk
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
