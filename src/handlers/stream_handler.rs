@@ -113,7 +113,7 @@ impl StreamAccumulator {
 }
 
 async fn stream_logger_task(
-    mut rx: mpsc::UnboundedReceiver<Value>,
+    mut rx: mpsc::UnboundedReceiver<String>,
     app_state: Arc<AppState>,
     headers: HeaderMap,
     payload: RequestPayload,
@@ -127,7 +127,16 @@ async fn stream_logger_task(
     let mut captured_usage: Option<Value> = None;
     let mut captured_finish_reason: Option<String> = None;
 
-    while let Some(chunk) = rx.recv().await {
+    while let Some(chunk_str) = rx.recv().await {
+        // Deserialize in background task
+        let chunk: Value = match serde_json::from_str(&chunk_str) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to deserialize chunk in logger task: {}", e);
+                continue;
+            }
+        };
+
         if first_chunk.is_none() {
             first_chunk = Some(chunk.clone());
         }
@@ -250,8 +259,8 @@ pub async fn process_streaming_response(
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
 
-    // Setup logger channel
-    let (tx, rx) = mpsc::unbounded_channel::<Value>();
+    // Setup logger channel (String instead of Value)
+    let (tx, rx) = mpsc::unbounded_channel::<String>();
     let app_state_clone = app_state.clone();
     let headers_clone = headers.clone();
     let payload_clone = payload.clone();
@@ -301,15 +310,16 @@ pub async fn process_streaming_response(
                         }
                     }
 
-                    // Send clone to logger task
-                    // Ignore send errors (e.g. logger task panics/drops)
-                    let _ = tx.send(value.clone());
+                    // Serialize once
+                    let json_str = simd_json::to_string(&value).unwrap_or_default();
 
-                    // 使用 simd_json 序列化回字符串
-                    Ok(Event::default().data(simd_json::to_string(&value).unwrap_or_default()))
+                    // Send string clone to logger task (cheaper than Value clone)
+                    let _ = tx.send(json_str.clone());
+
+                    // Send string to client
+                    Ok(Event::default().data(json_str))
                 } else {
                     // 如果不是 JSON（或者是其他类型的事件数据），原样转发
-                    // 注意：data_str 可能在 from_str 失败时被部分修改，但在 SSE 场景下非 JSON 数据通常是简单的文本，影响不大
                     Ok(Event::default().data(data_str))
                 }
             }
