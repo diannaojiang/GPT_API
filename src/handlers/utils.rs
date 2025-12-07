@@ -270,7 +270,11 @@ pub fn truncate_json(value: &Value) -> Value {
     match value {
         Value::String(s) => {
             if s.len() > 500 {
-                json!(format!("{}...[TRUNCATED]", &s[..500]))
+                let mut end = 500;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                json!(format!("{}...[TRUNCATED]", &s[..end]))
             } else {
                 value.clone()
             }
