@@ -31,6 +31,16 @@ fn prepare_chat_request(payload: &mut RequestPayload) {
     }
 }
 
+fn is_empty_value(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::String(s) => s.is_empty(),
+        Value::Array(arr) => arr.is_empty(),
+        Value::Object(obj) => obj.is_empty(),
+        _ => false,
+    }
+}
+
 /// 统一处理所有请求的核心逻辑
 ///
 /// 该函数实现了请求的完整生命周期管理，现已委托给 `DispatcherService` 处理路由和故障转移。
@@ -66,7 +76,54 @@ pub async fn handle_request_logic(
                     .into_response();
             }
         }
-        _ => {}
+        RequestPayload::Embedding(p) => {
+            if is_empty_value(&p.input) {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param input is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        RequestPayload::Rerank(p) => {
+            if p.query.is_empty() || p.documents.is_empty() {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param query or documents is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        RequestPayload::Score(p) => {
+            if is_empty_value(&p.text_1) || is_empty_value(&p.text_2) {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param text_1 or text_2 is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        RequestPayload::Classify(p) => {
+            if is_empty_value(&p.input) {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({
+                        "error": "Request param input is empty",
+                        "error_type": "Input Validation Error"
+                    })),
+                )
+                    .into_response();
+            }
+        }
     }
 
     // 对 Chat 请求，预处理 messages
