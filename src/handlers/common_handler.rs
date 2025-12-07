@@ -41,6 +41,30 @@ fn is_empty_value(v: &Value) -> bool {
     }
 }
 
+// Helper to create validation error response with logging metadata
+fn create_validation_error(msg: &str, payload: &RequestPayload) -> Response {
+    let error_response = json!({
+        "error": msg,
+        "error_type": "Input Validation Error"
+    });
+
+    let mut response =
+        (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
+
+    // Serialize payload for logging
+    let payload_value =
+        serde_json::to_value(payload).unwrap_or(json!({"error": "serialization failed"}));
+    let log_body = serde_json::to_string(&truncate_json(&payload_value)).unwrap_or_default();
+
+    response.extensions_mut().insert(AccessLogMeta {
+        model: payload.get_model().to_string(),
+        error: Some(msg.to_string()),
+        request_body: Some(log_body),
+    });
+
+    response
+}
+
 /// 统一处理所有请求的核心逻辑
 ///
 /// 该函数实现了请求的完整生命周期管理，现已委托给 `DispatcherService` 处理路由和故障转移。
@@ -54,74 +78,41 @@ pub async fn handle_request_logic(
     match &payload {
         RequestPayload::Chat(p) => {
             if p.messages.is_empty() {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param messages not arr or arr is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error(
+                    "Request param messages not arr or arr is empty",
+                    &payload,
+                );
             }
         }
         RequestPayload::Completion(p) => {
             if p.prompt.is_empty() {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param prompt is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error("Request param prompt is empty", &payload);
             }
         }
         RequestPayload::Embedding(p) => {
             if is_empty_value(&p.input) {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param input is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error("Request param input is empty", &payload);
             }
         }
         RequestPayload::Rerank(p) => {
             if p.query.is_empty() || p.documents.is_empty() {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param query or documents is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error(
+                    "Request param query or documents is empty",
+                    &payload,
+                );
             }
         }
         RequestPayload::Score(p) => {
             if is_empty_value(&p.text_1) || is_empty_value(&p.text_2) {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param text_1 or text_2 is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error(
+                    "Request param text_1 or text_2 is empty",
+                    &payload,
+                );
             }
         }
         RequestPayload::Classify(p) => {
             if is_empty_value(&p.input) {
-                return (
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({
-                        "error": "Request param input is empty",
-                        "error_type": "Input Validation Error"
-                    })),
-                )
-                    .into_response();
+                return create_validation_error("Request param input is empty", &payload);
             }
         }
     }

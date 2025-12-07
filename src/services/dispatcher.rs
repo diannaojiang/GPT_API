@@ -5,6 +5,8 @@ use crate::config::config_manager::ConfigManager;
 use crate::config::types::ClientConfig;
 use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::json;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -80,9 +82,28 @@ impl DispatcherService {
             match execution_result {
                 // 成功获得响应（包括 4xx 客户端错误，这些被视为业务成功处理）
                 Ok(mut response) => {
+                    let mut error_msg_opt = None;
+                    // 如果响应中包含 AccessLogMeta 且有错误信息，将所有尝试过的客户端追加上去
                     if let Some(meta) = response.extensions_mut().get_mut::<AccessLogMeta>() {
                         if let Some(err_msg) = &mut meta.error {
                             *err_msg = format!("{} (Tried: {:?})", err_msg, all_tried_clients);
+                            error_msg_opt = Some(err_msg.clone());
+                        }
+                    }
+
+                    // 如果是服务端错误 (5xx)，且我们有更新后的错误信息，重新构建响应体以包含 Tried 列表
+                    // 这样可以确保客户端收到的错误信息与服务端日志一致
+                    if response.status().is_server_error() {
+                        if let Some(msg) = error_msg_opt {
+                            let new_body = serde_json::json!({
+                                "error": msg,
+                                "error_type": "internal_error"
+                            });
+                            let mut new_response =
+                                (response.status(), axum::Json(new_body)).into_response();
+                            // 必须保留原来的 extension (Meta)，否则日志就丢了
+                            *new_response.extensions_mut() = response.extensions().clone();
+                            return new_response;
                         }
                     }
                     return response;
