@@ -95,20 +95,11 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
 
     // 6. 根据状态码决定日志级别
     if status.is_server_error() || status.is_client_error() {
-        // 仅在错误时记录请求体，并进行截断
+        // 仅在错误时记录请求体
+        // 不再进行中间件层面的截断，完全信任上层逻辑 (handler) 传递的内容
+        // 即使上层传递的是原始的长字符串(例如 json 解析失败)，也完整记录
         if let Some(body) = req_body_option {
-            let limit = 2048;
-            let truncated_body = if body.len() > limit {
-                // 安全截断：找到 limit 处或之前的合法字符边界，避免 panic
-                let mut end = limit;
-                while end > 0 && !body.is_char_boundary(end) {
-                    end -= 1;
-                }
-                format!("{}...[TRUNCATED]", &body[..end])
-            } else {
-                body
-            };
-            log_line.push_str(&format!(" {:?}", truncated_body));
+            log_line.push_str(&format!(" {:?}", body));
         } else {
             log_line.push_str(" \"-\"");
         }
