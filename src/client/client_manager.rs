@@ -15,7 +15,10 @@ impl Default for ClientManager {
 impl ClientManager {
     pub fn new() -> Self {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(180))
+            // TCP 连接建立超时：10秒 (快速失败)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            // 全局总超时：30分钟 (避免截断长流，但防止永久挂起)
+            .timeout(std::time::Duration::from_secs(1800))
             .build()
             .expect("Failed to build reqwest client");
         ClientManager { client }

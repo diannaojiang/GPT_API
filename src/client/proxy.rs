@@ -4,6 +4,8 @@ use reqwest::multipart::Form;
 use reqwest::{Client, Response};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 /// 从配置或请求头中获取 API Key
 ///
@@ -52,11 +54,16 @@ pub async fn build_and_send_request(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    let response = request_builder
-        .header("Content-Type", "application/json")
-        .json(request_body)
-        .send()
-        .await?;
+    // 设置 60秒 的首字节/响应头超时 (TTFB)
+    let response = timeout(
+        Duration::from_secs(60),
+        request_builder
+            .header("Content-Type", "application/json")
+            .json(request_body)
+            .send(),
+    )
+    .await
+    .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??;
 
     Ok(response)
 }
@@ -75,7 +82,13 @@ pub async fn build_and_send_request_multipart(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    let response = request_builder.multipart(form).send().await?;
+    // 设置 60秒 的首字节/响应头超时 (TTFB)
+    let response = timeout(
+        Duration::from_secs(60),
+        request_builder.multipart(form).send(),
+    )
+    .await
+    .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??;
 
     Ok(response)
 }
