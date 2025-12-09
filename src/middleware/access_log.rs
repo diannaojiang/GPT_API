@@ -1,5 +1,5 @@
 use axum::{body::Body, extract::ConnectInfo, http::Request, middleware::Next, response::Response};
-use chrono::Utc;
+use chrono::Local;
 use std::net::SocketAddr;
 use std::time::Instant;
 use tracing::{error, info};
@@ -75,7 +75,7 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
 
     // 5. 构造 Nginx Combined 风格的日志字符串
     // 格式: IP - - [Time] "Method URI Version" Status Bytes "Referer" "UserAgent" Latency "Model" "ApiKey" "Error" "RequestBody"
-    let time_str = Utc::now().format("%d/%b/%Y:%H:%M:%S %z");
+    let time_str = Local::now().format("%d/%b/%Y:%H:%M:%S %z");
 
     let mut log_line = format!(
         "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" {:?}",
