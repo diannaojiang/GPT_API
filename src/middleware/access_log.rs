@@ -97,8 +97,14 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     if status.is_server_error() || status.is_client_error() {
         // 仅在错误时记录请求体，并进行截断
         if let Some(body) = req_body_option {
-            let truncated_body = if body.len() > 2048 {
-                format!("{}...[TRUNCATED]", &body[..2048])
+            let limit = 2048;
+            let truncated_body = if body.len() > limit {
+                // 安全截断：找到 limit 处或之前的合法字符边界，避免 panic
+                let mut end = limit;
+                while end > 0 && !body.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...[TRUNCATED]", &body[..end])
             } else {
                 body
             };
