@@ -36,34 +36,47 @@ pub fn get_api_key(
 /// 1. 复用 HTTP 客户端连接
 /// 2. 构造请求头（包括 API Key）
 /// 3. 发送 POST 请求
+///
+/// 对于流式请求，应用 60秒 TTFB 超时以快速失败
+/// 对于非流式请求，仅受 ClientManager 的 1800秒 全局超时限制
 pub async fn build_and_send_request(
     app_state: &Arc<AppState>,
     _client_config: &ClientConfig,
     api_key: &Option<String>,
     url: &str,
     request_body: &Value,
+    is_streaming: bool,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     // 获取 HTTP 客户端 (复用)
     let client: Client = app_state.client_manager.get_client();
 
-    // 构造并发送请求
-    // 注意：ClientManager 默认设置了 180s 超时
+    // 构造请求
     let mut request_builder = client.post(url);
 
     if let Some(key) = api_key {
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    // 设置 60秒 的首字节/响应头超时 (TTFB)
-    let response = timeout(
-        Duration::from_secs(60),
+    // 根据请求类型应用不同的超时策略
+    let response = if is_streaming {
+        // 流式请求：设置 60秒 的首字节/响应头超时 (TTFB)
+        timeout(
+            Duration::from_secs(60),
+            request_builder
+                .header("Content-Type", "application/json")
+                .json(request_body)
+                .send(),
+        )
+        .await
+        .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??
+    } else {
+        // 非流式请求：不设置额外超时，仅依赖 ClientManager 的 1800秒 全局超时
         request_builder
             .header("Content-Type", "application/json")
             .json(request_body)
-            .send(),
-    )
-    .await
-    .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??;
+            .send()
+            .await?
+    };
 
     Ok(response)
 }
@@ -73,6 +86,7 @@ pub async fn build_and_send_request_multipart(
     api_key: &Option<String>,
     url: &str,
     form: Form,
+    is_streaming: bool,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let http_client = app_state.client_manager.get_client();
 
@@ -82,13 +96,19 @@ pub async fn build_and_send_request_multipart(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    // 设置 60秒 的首字节/响应头超时 (TTFB)
-    let response = timeout(
-        Duration::from_secs(60),
-        request_builder.multipart(form).send(),
-    )
-    .await
-    .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??;
+    // 根据请求类型应用不同的超时策略
+    let response = if is_streaming {
+        // 流式请求：设置 60秒 的首字节/响应头超时 (TTFB)
+        timeout(
+            Duration::from_secs(60),
+            request_builder.multipart(form).send(),
+        )
+        .await
+        .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??
+    } else {
+        // 非流式请求：不设置额外超时，仅依赖 ClientManager 的 1800秒 全局超时
+        request_builder.multipart(form).send().await?
+    };
 
     Ok(response)
 }

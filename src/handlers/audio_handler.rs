@@ -132,8 +132,10 @@ async fn handle_audio_request(
                 );
                 let api_key = get_api_key(&client_config, &headers);
 
-                // 4. 发送请求
-                match build_and_send_request_multipart(&app_state, &api_key, &url, form).await {
+                // 4. 发送请求（音频请求不支持流式）
+                match build_and_send_request_multipart(&app_state, &api_key, &url, form, false)
+                    .await
+                {
                     Ok(resp) => {
                         let status = resp.status();
                         let headers = resp.headers().clone();

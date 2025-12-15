@@ -180,23 +180,31 @@ async fn dispatch_request(
     let api_key = get_api_key(client_config, headers);
 
     let request_body = build_request_body_generic(payload, client_config, payload.is_streaming());
+    let is_streaming = payload.is_streaming();
 
     // 这里 build_and_send_request 现在返回 Ok(response) 即使状态码是 4xx/5xx
-    let response = build_and_send_request(app_state, client_config, &api_key, &url, &request_body)
-        .await
-        .map_err(|e| match e.downcast::<reqwest::Error>() {
-            Ok(req_err) => {
-                let error_text = if req_err.is_timeout() {
-                    "Request timed out"
-                } else if req_err.is_connect() {
-                    "Failed to connect to host"
-                } else {
-                    "External request failed"
-                };
-                AppError::InternalServerError(error_text.to_string())
-            }
-            Err(original_err) => AppError::InternalServerError(original_err.to_string()),
-        })?;
+    let response = build_and_send_request(
+        app_state,
+        client_config,
+        &api_key,
+        &url,
+        &request_body,
+        is_streaming,
+    )
+    .await
+    .map_err(|e| match e.downcast::<reqwest::Error>() {
+        Ok(req_err) => {
+            let error_text = if req_err.is_timeout() {
+                "Request timed out"
+            } else if req_err.is_connect() {
+                "Failed to connect to host"
+            } else {
+                "External request failed"
+            };
+            AppError::InternalServerError(error_text.to_string())
+        }
+        Err(original_err) => AppError::InternalServerError(original_err.to_string()),
+    })?;
 
     // 核心修改：检查是否应该进入流式处理
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
