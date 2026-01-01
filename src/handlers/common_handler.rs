@@ -120,10 +120,12 @@ pub async fn handle_request_logic(
     prepare_chat_request(&mut payload);
 
     let initial_model = payload.get_model().to_string();
+    // 提取路由特征（锚点与权重）
+    let routing_keys = payload.get_routing_keys();
 
     let mut response = app_state
         .dispatcher_service
-        .execute(&initial_model, |client_config, model_name| {
+        .execute(&initial_model, routing_keys, |client_config, model_name| {
             // 每次重试可能针对不同的模型（fallback），因此需要更新 payload 中的 model
             // 同时需要克隆上下文数据以传递给异步块
             let app_state = app_state.clone();

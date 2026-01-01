@@ -1,6 +1,6 @@
 use crate::app_error::AppError;
 use crate::client::client_manager::ClientManager;
-use crate::client::routing::select_clients_by_weight;
+use crate::client::routing::select_clients;
 use crate::config::config_manager::ConfigManager;
 use crate::config::types::ClientConfig;
 use crate::models::AccessLogMeta;
@@ -26,15 +26,19 @@ impl DispatcherService {
     }
 
     /// 解析给定模型名称对应的客户端列表，并应用负载均衡
-    async fn resolve_clients(&self, model_name: &str) -> Result<Vec<ClientConfig>, AppError> {
+    async fn resolve_clients(
+        &self,
+        model_name: &str,
+        routing_keys: &Option<Vec<(String, usize)>>,
+    ) -> Result<Vec<ClientConfig>, AppError> {
         let config_guard = self.config_manager.get_config_guard().await;
         let matching_clients = self
             .client_manager
             .find_matching_clients(&config_guard, model_name)
             .await;
 
-        // 应用基于权重的负载均衡策略
-        let matching_clients = select_clients_by_weight(matching_clients);
+        // 应用负载均衡策略（支持加权随机或加权投票）
+        let matching_clients = select_clients(matching_clients, routing_keys.clone());
 
         if matching_clients.is_empty() {
             Err(AppError::ClientNotFound(model_name.to_string()))
@@ -44,14 +48,12 @@ impl DispatcherService {
     }
 
     /// 执行统一的请求分发逻辑，包含路由、负载均衡和故障转移循环。
-    ///
-    /// # 参数
-    /// - `initial_model`: 初始请求的模型名称
-    /// - `request_callback`: 一个异步闭包，接受 `ClientConfig` 和 `current_model_name`，负责构建并发送实际的 HTTP 请求。
-    ///
-    /// # 返回
-    /// - `Response`: 最终的 HTTP 响应（成功或错误）
-    pub async fn execute<F, Fut>(&self, initial_model: &str, mut request_callback: F) -> Response
+    pub async fn execute<F, Fut>(
+        &self,
+        initial_model: &str,
+        routing_keys: Option<Vec<(String, usize)>>,
+        mut request_callback: F,
+    ) -> Response
     where
         F: FnMut(&ClientConfig, &str) -> Fut + Send,
         Fut: Future<Output = Result<Response, AppError>> + Send,
@@ -60,16 +62,14 @@ impl DispatcherService {
         let mut all_tried_clients = Vec::new();
 
         // 主循环：处理故障转移 (Fallback)
-        // 当所有客户端都失败且定义了 fallback 模型时，更新 current_model 并重新开始循环
         loop {
-            // 1. 解析客户端
-            let clients = match self.resolve_clients(&current_model).await {
+            // 1. 解析客户端 (传入路由键)
+            let clients = match self.resolve_clients(&current_model, &routing_keys).await {
                 Ok(c) => c,
                 Err(e) => return e.into_response(),
             };
 
             // 2. 尝试执行客户端链
-            // 这个内部循环尝试当前模型对应的所有可用客户端（负载均衡结果）
             let execution_result = self
                 .execute_client_chain(
                     &clients,
@@ -78,7 +78,7 @@ impl DispatcherService {
                     &mut all_tried_clients,
                 )
                 .await;
-
+            // ... (后面保持不变)
             match execution_result {
                 // 成功获得响应（包括 4xx 客户端错误，这些被视为业务成功处理）
                 Ok(mut response) => {

@@ -89,81 +89,86 @@ async fn handle_audio_request(
     // 2. 委托给 DispatcherService 处理路由和重试
     app_state
         .dispatcher_service
-        .execute(&model_name, |client_config, _current_model| {
-            let app_state = app_state.clone();
-            let headers = headers.clone();
-            let endpoint_path = endpoint_path.to_string();
+        .execute(
+            &model_name,
+            None,
+            |client_config: &crate::config::types::ClientConfig, _current_model| {
+                let app_state = app_state.clone();
+                let headers = headers.clone();
+                let endpoint_path = endpoint_path.to_string();
 
-            // 重新构建 cached_parts 的克隆，供本次请求使用
-            let parts_clone: Vec<CachedPart> = cached_parts
-                .iter()
-                .map(|p| CachedPart {
-                    name: p.name.clone(),
-                    data: p.data.clone(),
-                    file_name: p.file_name.clone(),
-                    content_type: p.content_type.clone(),
-                })
-                .collect();
+                // 重新构建 cached_parts 的克隆，供本次请求使用
+                let parts_clone: Vec<CachedPart> = cached_parts
+                    .iter()
+                    .map(|p| CachedPart {
+                        name: p.name.clone(),
+                        data: p.data.clone(),
+                        file_name: p.file_name.clone(),
+                        content_type: p.content_type.clone(),
+                    })
+                    .collect();
 
-            let client_config = client_config.clone();
+                let client_config = client_config.clone();
 
-            async move {
-                // 3. 为每个客户端重新构建 Form
-                let mut form = Form::new();
-                for part in parts_clone {
-                    let mut req_part = Part::bytes(part.data);
-                    if let Some(fn_str) = part.file_name {
-                        req_part = req_part.file_name(fn_str);
-                    }
-                    if let Some(ct_str) = part.content_type {
-                        if let Ok(_) = ct_str.parse::<mime::Mime>() {
-                            req_part = req_part.mime_str(&ct_str).expect("Mime confirmed valid");
-                        } else {
-                            error!("Invalid mime type in audio part: {}", ct_str);
+                async move {
+                    // 3. 为每个客户端重新构建 Form
+                    let mut form = Form::new();
+                    for part in parts_clone {
+                        let mut req_part = Part::bytes(part.data);
+                        if let Some(fn_str) = part.file_name {
+                            req_part = req_part.file_name(fn_str);
                         }
-                    }
-                    form = form.part(part.name, req_part);
-                }
-
-                let url = format!(
-                    "{}/{}",
-                    client_config.base_url.trim_end_matches('/'),
-                    endpoint_path
-                );
-                let api_key = get_api_key(&client_config, &headers);
-
-                // 4. 发送请求（音频请求不支持流式）
-                match build_and_send_request_multipart(&app_state, &api_key, &url, form, false)
-                    .await
-                {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        let headers = resp.headers().clone();
-                        let bytes = match resp.bytes().await {
-                            Ok(b) => b,
-                            Err(e) => {
-                                error!("Failed to read response bytes: {}", e);
-                                return Err(AppError::from(e));
+                        if let Some(ct_str) = part.content_type {
+                            if let Ok(_) = ct_str.parse::<mime::Mime>() {
+                                req_part =
+                                    req_part.mime_str(&ct_str).expect("Mime confirmed valid");
+                            } else {
+                                error!("Invalid mime type in audio part: {}", ct_str);
                             }
-                        };
-
-                        let mut response = bytes.into_response();
-                        *response.status_mut() = status;
-                        if let Some(ct) = headers.get("content-type") {
-                            response.headers_mut().insert("content-type", ct.clone());
                         }
-
-                        Ok(response)
+                        form = form.part(part.name, req_part);
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to process audio request with client {}: {:?}",
-                            client_config.name, e
-                        );
-                        Err(AppError::InternalServerError(e.to_string()))
+
+                    let url = format!(
+                        "{}/{}",
+                        client_config.base_url.trim_end_matches('/'),
+                        endpoint_path
+                    );
+                    let api_key = get_api_key(&client_config, &headers);
+
+                    // 4. 发送请求（音频请求不支持流式）
+                    match build_and_send_request_multipart(&app_state, &api_key, &url, form, false)
+                        .await
+                    {
+                        Ok(resp) => {
+                            let status = resp.status();
+                            let headers = resp.headers().clone();
+                            let bytes = match resp.bytes().await {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    error!("Failed to read response bytes: {}", e);
+                                    return Err(AppError::from(e));
+                                }
+                            };
+
+                            let mut response = bytes.into_response();
+                            *response.status_mut() = status;
+                            if let Some(ct) = headers.get("content-type") {
+                                response.headers_mut().insert("content-type", ct.clone());
+                            }
+
+                            Ok(response)
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to process audio request with client {}: {:?}",
+                                client_config.name, e
+                            );
+                            Err(AppError::InternalServerError(e.to_string()))
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
         .await
 }

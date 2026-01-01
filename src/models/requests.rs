@@ -62,6 +62,53 @@ impl RequestPayload {
             _ => false,
         }
     }
+
+    /// 提取用于路由决策的特征键值对 (key_content, weight)
+    /// 返回 None 表示不使用确定性路由，回退到随机模式。
+    pub fn get_routing_keys(&self) -> Option<Vec<(String, usize)>> {
+        match self {
+            RequestPayload::Chat(p) => {
+                let mut keys = Vec::new();
+                for msg in &p.messages {
+                    if msg.role == "user" {
+                        if let Some(content) = &msg.content {
+                            let text = match content {
+                                MessageContent::String(s) => s.clone(),
+                                MessageContent::Array(parts) => parts
+                                    .iter()
+                                    .filter_map(|part| part.text.clone())
+                                    .collect::<Vec<String>>()
+                                    .join(""),
+                            };
+
+                            if !text.is_empty() {
+                                // 提取前 64 个字符作为哈希锚点，完整长度作为权重
+                                let key = text.chars().take(64).collect::<String>();
+                                let weight = text.len();
+                                keys.push((key, weight));
+                            }
+                        }
+                    }
+                }
+                if keys.is_empty() {
+                    None
+                } else {
+                    Some(keys)
+                }
+            }
+            RequestPayload::Completion(p) => {
+                if !p.prompt.is_empty() {
+                    let key = p.prompt.chars().take(64).collect::<String>();
+                    let weight = p.prompt.len();
+                    Some(vec![(key, weight)])
+                } else {
+                    None
+                }
+            }
+            // Embedding, Rerank, Score, Classify 等不需要内容路由，返回 None 回退随机
+            _ => None,
+        }
+    }
 }
 
 // Data structures for requests
