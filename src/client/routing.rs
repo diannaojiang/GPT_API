@@ -138,14 +138,14 @@ mod tests {
     }
 
     #[test]
-    fn test_select_clients_by_weight() {
+    fn test_select_clients_by_random_weight() {
         let clients = vec![
             create_test_client("client1", 1),
             create_test_client("client2", 3),
             create_test_client("client3", 2),
         ];
 
-        let selected = select_clients_by_weight(clients);
+        let selected = select_clients_by_random_weight(clients);
 
         // 检查返回的客户端数量是否正确
         assert_eq!(selected.len(), 3);
@@ -155,9 +155,9 @@ mod tests {
     }
 
     #[test]
-    fn test_select_clients_by_weight_empty() {
+    fn test_select_clients_by_random_weight_empty() {
         let clients: Vec<ClientConfig> = vec![];
-        let selected = select_clients_by_weight(clients);
+        let selected = select_clients_by_random_weight(clients);
         assert!(selected.is_empty());
     }
 }

@@ -5,8 +5,6 @@ use crate::config::config_manager::ConfigManager;
 use crate::config::types::ClientConfig;
 use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde_json::json;
 use std::future::Future;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

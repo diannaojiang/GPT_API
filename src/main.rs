@@ -1,4 +1,4 @@
-use axum::{extract::State, middleware as axum_middleware};
+use axum::middleware as axum_middleware;
 use mimalloc::MiMalloc;
 use std::net::SocketAddr;
 use std::sync::Arc;
