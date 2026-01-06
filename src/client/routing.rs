@@ -79,11 +79,19 @@ fn select_clients_by_voting(
             let hash_val = hasher.finish();
 
             // 归一化哈希值到 [0, 1]
-            let normalized_hash = (hash_val as f64) / (u64::MAX as f64);
+            // 为了数学严谨性，确保结果在 (0, 1] 区间，避免 0.0 的边界情况（虽然 u64 哈希碰撞概率极低）
+            // 我们使用 hash_val + 1 避免 0，且除以 MAX + 1.0 保持在 1.0 以内
+            let normalized_hash = ((hash_val as f64) + 1.0) / ((u64::MAX as f64) + 1.0);
+
             let priority = client.priority.unwrap_or(0) as f64;
 
-            // 结合客户端自身权重计算得分
-            let score = normalized_hash * priority;
+            // 使用 Efraimidis-Spirakis 算法: score = r^(1/w)
+            // 这种算法在保持确定性（只要 r 确定）的同时，能让概率分布严格逼近权重比例
+            let score = if priority <= 0.0 {
+                0.0
+            } else {
+                normalized_hash.powf(1.0 / priority)
+            };
 
             if score > max_hash_score {
                 max_hash_score = score;
