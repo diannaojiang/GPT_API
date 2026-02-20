@@ -1,6 +1,9 @@
+use crate::metrics::exporter::create_metrics_router;
+use crate::metrics::middleware::metrics_middleware;
 use crate::state::app_state::AppState;
 use axum::{
     http::Method,
+    middleware as axum_middleware,
     routing::{get, post},
     Router,
 };
@@ -39,6 +42,8 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
             "/v1/audio/translations",
             post(audio::handle_audio_translation),
         )
+        .merge(create_metrics_router())
         .layer(cors)
+        .layer(axum_middleware::from_fn(metrics_middleware))
         .with_state(app_state)
 }
