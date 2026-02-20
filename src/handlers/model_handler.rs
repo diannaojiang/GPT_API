@@ -4,8 +4,19 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use crate::config::types::ClientConfig;
+use crate::config::types::{ClientConfig, ModelMatch};
 use crate::state::app_state::AppState;
+
+fn model_matches_filter(model_id: &str, model_match: &ModelMatch) -> bool {
+    match model_match.match_type.as_str() {
+        "keyword" => model_match
+            .value
+            .iter()
+            .any(|keyword| model_id.contains(keyword)),
+        "exact" => model_match.value.contains(&model_id.to_string()),
+        _ => false,
+    }
+}
 
 /// 从单个客户端获取模型列表
 async fn fetch_models_from_client(
@@ -55,16 +66,20 @@ pub async fn list_models(State(app_state): State<Arc<AppState>>) -> Json<Value> 
     // 收集所有成功的响应
     let mut all_models = Vec::new();
 
-    for result in results {
+    for (result, client_config) in results.iter().zip(config.openai_clients.iter()) {
         if let Ok(Some(models)) = result {
-            // 如果响应包含"data"数组，将其展开并添加到all_models
             if let Some(data) = models.get("data").and_then(|d| d.as_array()) {
                 for model in data {
-                    all_models.push(model.clone());
+                    if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
+                        if model_matches_filter(id, &client_config.model_match) {
+                            all_models.push(model.clone());
+                        }
+                    }
                 }
-            } else {
-                // 如果响应是单个模型对象，直接添加
-                all_models.push(models);
+            } else if let Some(id) = models.get("id").and_then(|id| id.as_str()) {
+                if model_matches_filter(id, &client_config.model_match) {
+                    all_models.push(models.clone());
+                }
             }
         }
     }
