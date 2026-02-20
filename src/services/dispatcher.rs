@@ -7,6 +7,7 @@ use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
 use std::future::Future;
 use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
 
 #[derive(Clone)]
@@ -45,36 +46,28 @@ impl DispatcherService {
         }
     }
 
-    /// 执行统一的请求分发逻辑，包含路由、负载均衡和故障转移循环。
     pub async fn execute<F, Fut>(
         &self,
         initial_model: &str,
         routing_keys: Option<Vec<(String, usize)>>,
-        mut request_callback: F,
+        request_callback: F,
     ) -> Response
     where
-        F: FnMut(&ClientConfig, &str) -> Fut + Send,
-        Fut: Future<Output = Result<Response, AppError>> + Send,
+        F: FnMut(&ClientConfig, &str) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Response, AppError>> + Send + 'static,
     {
+        let cb = Arc::new(Mutex::new(request_callback));
         let mut current_model = initial_model.to_string();
         let mut all_tried_clients = Vec::new();
 
-        // 主循环：处理故障转移 (Fallback)
         loop {
-            // 1. 解析客户端 (传入路由键)
             let clients = match self.resolve_clients(&current_model, &routing_keys).await {
                 Ok(c) => c,
                 Err(e) => return e.into_response(),
             };
 
-            // 2. 尝试执行客户端链
             let execution_result = self
-                .execute_client_chain(
-                    &clients,
-                    &current_model,
-                    &mut request_callback,
-                    &mut all_tried_clients,
-                )
+                .execute_client_chain(&clients, &current_model, cb.clone(), &mut all_tried_clients)
                 .await;
             // ... (后面保持不变)
             match execution_result {
@@ -140,34 +133,108 @@ impl DispatcherService {
         }
     }
 
-    /// 遍历客户端列表并执行请求
     async fn execute_client_chain<F, Fut>(
         &self,
         clients: &[ClientConfig],
         model_name: &str,
-        request_callback: &mut F,
+        request_callback: Arc<Mutex<F>>,
         tried_clients_accumulator: &mut Vec<String>,
     ) -> Result<Response, Option<String>>
     where
-        F: FnMut(&ClientConfig, &str) -> Fut + Send,
-        Fut: Future<Output = Result<Response, AppError>> + Send,
+        F: FnMut(&ClientConfig, &str) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Response, AppError>> + Send + 'static,
     {
+        if clients.is_empty() {
+            return Err(None);
+        }
+
+        let primary_client = &clients[0];
+        tried_clients_accumulator.push(primary_client.name.clone());
+        debug!(
+            "Dispatching request to primary client: {}",
+            primary_client.name
+        );
+
+        let primary_result = {
+            let mut cb = request_callback.lock().await;
+            cb(primary_client, model_name).await
+        };
+
+        match primary_result {
+            Ok(mut resp) => {
+                let status = resp.status();
+                if status.is_success() || status.is_client_error() {
+                    if resp.extensions().get::<AccessLogMeta>().is_none() {
+                        resp.extensions_mut().insert(AccessLogMeta {
+                            model: model_name.to_string(),
+                            error: if status.is_client_error() {
+                                Some(format!("Upstream client error: {}", status))
+                            } else {
+                                None
+                            },
+                            request_body: None,
+                        });
+                    }
+                    return Ok(resp);
+                }
+                warn!(
+                    "Primary client {} failed with status {}. Triggering concurrent fallback...",
+                    primary_client.name, status
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Primary client {} failed with error: {}. Triggering concurrent fallback...",
+                    primary_client.name, e
+                );
+            }
+        }
+
+        let fallback_clients = &clients[1..];
+        if fallback_clients.is_empty() {
+            if let Some(fallback_model) = &primary_client.fallback {
+                return Err(Some(fallback_model.clone()));
+            }
+            return Err(None);
+        }
+
+        debug!(
+            "Starting concurrent fallback with {} clients",
+            fallback_clients.len()
+        );
+
+        let (tx, mut rx) =
+            mpsc::channel::<(usize, Result<Response, AppError>)>(fallback_clients.len());
+
+        for (idx, client_config) in fallback_clients.iter().enumerate() {
+            let client = client_config.clone();
+            let model = model_name.to_string();
+            let cb_clone = request_callback.clone();
+            let tx_clone = tx.clone();
+
+            tokio::spawn(async move {
+                let result = {
+                    let mut cb = cb_clone.lock().await;
+                    cb(&client, &model).await
+                };
+                let _ = tx_clone.send((idx, result)).await;
+            });
+        }
+
+        drop(tx);
+
         let mut last_response: Option<Response> = None;
+        let mut remaining = fallback_clients.len();
 
-        for client_config in clients {
-            tried_clients_accumulator.push(client_config.name.clone());
-            debug!("Dispatching request to client: {}", client_config.name);
-
-            // 调用回调函数执行实际请求
-            let result = request_callback(client_config, model_name).await;
+        while let Some((idx, result)) = rx.recv().await {
+            remaining -= 1;
+            tried_clients_accumulator.push(fallback_clients[idx].name.clone());
 
             match result {
                 Ok(mut resp) => {
                     let status = resp.status();
-
-                    // 1. 成功 (2xx) -> 直接返回
                     if status.is_success() {
-                        // 注入 AccessLogMeta (如果尚未存在)
+                        debug!("Fallback client {} succeeded", fallback_clients[idx].name);
                         if resp.extensions().get::<AccessLogMeta>().is_none() {
                             resp.extensions_mut().insert(AccessLogMeta {
                                 model: model_name.to_string(),
@@ -177,13 +244,8 @@ impl DispatcherService {
                         }
                         return Ok(resp);
                     }
-
-                    // 2. 客户端错误 (4xx) -> 业务错误，不重试，直接返回
                     if status.is_client_error() {
-                        // 确保 Log Meta 存在
-                        if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
-                            meta.model = model_name.to_string();
-                        } else {
+                        if resp.extensions().get::<AccessLogMeta>().is_none() {
                             resp.extensions_mut().insert(AccessLogMeta {
                                 model: model_name.to_string(),
                                 error: Some(format!("Upstream client error: {}", status)),
@@ -192,56 +254,39 @@ impl DispatcherService {
                         }
                         return Ok(resp);
                     }
-
-                    // 3. 服务端错误 (5xx) -> 检查 Fallback
-                    if status.is_server_error() {
-                        warn!(
-                            "Client {} failed with status {}. Checking fallback...",
-                            client_config.name, status
-                        );
-
-                        if let Some(fallback_model) = &client_config.fallback {
-                            // 立即返回 Fallback 模型名称，触发外层循环重启
-                            return Err(Some(fallback_model.clone()));
-                        }
-
-                        // 如果没有特定 fallback，暂存响应，继续尝试下一个同模型的客户端
-                        last_response = Some(resp);
-                    }
+                    last_response = Some(resp);
                 }
                 Err(e) => {
-                    // 网络错误或其他 AppError
                     warn!(
-                        "Failed to process request with client {}: {}",
-                        client_config.name, e
+                        "Fallback client {} failed: {}",
+                        fallback_clients[idx].name, e
                     );
-
-                    if let Some(fallback_model) = &client_config.fallback {
-                        return Err(Some(fallback_model.clone()));
-                    }
                     last_response = Some(e.into_response());
                 }
             }
+
+            if remaining == 0 {
+                break;
+            }
         }
 
-        // 如果循环结束还没有返回 Ok，说明所有客户端都失败了
         if let Some(mut resp) = last_response {
-            // 返回最后一个失败的响应
             if let Some(meta) = resp.extensions_mut().get_mut::<AccessLogMeta>() {
                 meta.model = model_name.to_string();
             } else {
                 resp.extensions_mut().insert(AccessLogMeta {
                     model: model_name.to_string(),
-                    error: Some(
-                        "All upstream providers failed (forwarding last error)".to_string(),
-                    ),
+                    error: Some("All fallback clients failed".to_string()),
                     request_body: None,
                 });
             }
             return Ok(resp);
         }
 
-        // 没有任何响应（例如客户端列表为空，或者逻辑漏洞），返回 None 表示完全失败
+        if let Some(fallback_model) = &primary_client.fallback {
+            return Err(Some(fallback_model.clone()));
+        }
+
         Err(None)
     }
 }
