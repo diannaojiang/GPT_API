@@ -120,25 +120,25 @@ pub async fn handle_request_logic(
     prepare_chat_request(&mut payload);
 
     let initial_model = payload.get_model().to_string();
-    // 提取路由特征（锚点与权重）
     let routing_keys = payload.get_routing_keys();
+    let payload_clone = payload.clone();
+    let app_state_clone = app_state.clone();
+    let headers_clone = headers.clone();
+    let addr_clone = addr;
 
     let mut response = app_state
         .dispatcher_service
-        .execute(&initial_model, routing_keys, |client_config, model_name| {
-            // 每次重试可能针对不同的模型（fallback），因此需要更新 payload 中的 model
-            // 同时需要克隆上下文数据以传递给异步块
-            let app_state = app_state.clone();
-            let headers = headers.clone();
-            let addr = addr.clone();
+        .execute(&initial_model, routing_keys, move |client_config, model_name| {
+            let app_state_inner = app_state_clone.clone();
+            let headers_inner = headers_clone.clone();
+            let addr_inner = addr_clone;
 
-            // Clone payload 并在副本上设置新的模型名称
-            let mut current_payload = payload.clone();
+            let mut current_payload = payload_clone.clone();
             current_payload.set_model(model_name.to_string());
             let client_config = client_config.clone();
 
             async move {
-                dispatch_request(&app_state, &headers, addr, &current_payload, &client_config).await
+                dispatch_request(&app_state_inner, &headers_inner, addr_inner, &current_payload, &client_config).await
             }
         })
         .await;

@@ -86,19 +86,21 @@ async fn handle_audio_request(
         .into_response();
     }
 
+    let endpoint_path_owned = endpoint_path.to_string();
+    let cached_parts_clone = cached_parts;
+    let app_state_for_closure = app_state.clone();
+
     // 2. 委托给 DispatcherService 处理路由和重试
     app_state
         .dispatcher_service
         .execute(
             &model_name,
             None,
-            |client_config: &crate::config::types::ClientConfig, _current_model| {
-                let app_state = app_state.clone();
+            move |client_config: &crate::config::types::ClientConfig, _current_model| {
+                let app_state = app_state_for_closure.clone();
                 let headers = headers.clone();
-                let endpoint_path = endpoint_path.to_string();
 
-                // 重新构建 cached_parts 的克隆，供本次请求使用
-                let parts_clone: Vec<CachedPart> = cached_parts
+                let parts_clone: Vec<CachedPart> = cached_parts_clone
                     .iter()
                     .map(|p| CachedPart {
                         name: p.name.clone(),
@@ -109,6 +111,7 @@ async fn handle_audio_request(
                     .collect();
 
                 let client_config = client_config.clone();
+                let endpoint_path = endpoint_path_owned.clone();
 
                 async move {
                     // 3. 为每个客户端重新构建 Form
