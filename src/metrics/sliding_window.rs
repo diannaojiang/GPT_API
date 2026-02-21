@@ -25,7 +25,7 @@ impl SlidingWindow {
 
     fn max(&self) -> f64 {
         let data = self.data.lock().unwrap();
-        data.iter().cloned().fold(0.0 / 0.0, f64::max)
+        data.iter().cloned().fold(f64::NAN, f64::max)
     }
 
     fn avg(&self) -> f64 {
@@ -34,11 +34,6 @@ impl SlidingWindow {
             return 0.0;
         }
         data.iter().sum::<f64>() / data.len() as f64
-    }
-
-    fn clear(&self) {
-        let mut data = self.data.lock().unwrap();
-        data.clear();
     }
 }
 
