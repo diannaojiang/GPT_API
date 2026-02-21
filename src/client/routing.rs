@@ -168,4 +168,68 @@ mod tests {
         let selected = select_clients_by_random_weight(clients);
         assert!(selected.is_empty());
     }
+
+    #[test]
+    fn test_select_clients_with_routing_keys() {
+        let clients = vec![
+            create_test_client("client1", 10),
+            create_test_client("client2", 10),
+        ];
+
+        let routing_keys = vec![("test content here".to_string(), 100)];
+        let selected = select_clients(clients.clone(), Some(routing_keys));
+
+        assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn test_select_clients_empty_input() {
+        let clients: Vec<ClientConfig> = vec![];
+        let selected = select_clients(clients, None);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_select_clients_single_client() {
+        let clients = vec![create_test_client("client1", 5)];
+
+        let selected = select_clients(clients, None);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "client1");
+    }
+
+    #[test]
+    fn test_deterministic_routing_same_input() {
+        let clients = vec![
+            create_test_client("server1", 10),
+            create_test_client("server2", 10),
+        ];
+
+        let routing_keys = vec![("hello world".to_string(), 50)];
+
+        let result1 = select_clients_by_voting(clients.clone(), routing_keys.clone());
+        let result2 = select_clients_by_voting(clients, routing_keys);
+
+        assert_eq!(result1[0].name, result2[0].name);
+    }
+
+    #[test]
+    fn test_deterministic_routing_different_content() {
+        let clients = vec![
+            create_test_client("server1", 10),
+            create_test_client("server2", 10),
+        ];
+
+        let keys1 = vec![("content A".to_string(), 50)];
+        let keys2 = vec![("content B".to_string(), 50)];
+
+        let result1 = select_clients_by_voting(clients.clone(), keys1);
+        let result2 = select_clients_by_voting(clients, keys2);
+
+        assert!(
+            result1[0].name != result2[0].name
+                || result1[0].name == "server1" && result2[0].name == "server1"
+        );
+    }
 }

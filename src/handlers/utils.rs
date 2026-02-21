@@ -376,3 +376,276 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::requests::{Message, MessageContent};
+    use axum::http::HeaderMap;
+
+    fn create_message(role: &str, content: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: Some(MessageContent::String(content.to_string())),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn test_get_client_ip_from_x_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.195, 70.41.3.18".parse().unwrap(),
+        );
+
+        let result = get_client_ip(&headers, None);
+        assert_eq!(result, "203.0.113.195");
+    }
+
+    #[test]
+    fn test_get_client_ip_from_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "192.168.1.100".parse().unwrap());
+
+        let result = get_client_ip(&headers, None);
+        assert_eq!(result, "192.168.1.100");
+    }
+
+    #[test]
+    fn test_get_client_ip_ipv4_mapped() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "::ffff:192.168.1.1".parse().unwrap());
+
+        let result = get_client_ip(&headers, None);
+        assert_eq!(result, "192.168.1.1");
+    }
+
+    #[test]
+    fn test_get_client_ip_unknown() {
+        let headers = HeaderMap::new();
+
+        let result = get_client_ip(&headers, None);
+        assert_eq!(result, "unknown");
+    }
+
+    #[test]
+    fn test_process_messages_empty() {
+        let messages: Vec<Message> = vec![];
+        let result = process_messages(messages);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_process_messages_merge_consecutive_user() {
+        let messages = vec![
+            create_message("user", "First message"),
+            create_message("user", "Second message"),
+            create_message("assistant", "Response"),
+        ];
+
+        let result = process_messages(messages);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].role, "user");
+        assert_eq!(
+            result[0].content.as_ref().unwrap(),
+            &MessageContent::String("Second message".to_string())
+        );
+    }
+
+    #[test]
+    fn test_process_messages_filter_empty() {
+        let messages = vec![
+            create_message("user", "Valid message"),
+            create_message("user", "   "),
+        ];
+
+        let result = process_messages(messages);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].content.as_ref().unwrap(),
+            &MessageContent::String("Valid message".to_string())
+        );
+    }
+
+    #[test]
+    fn test_filter_empty_messages_keeps_tool_calls() {
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: None,
+            tool_calls: Some(serde_json::json!([{"id": "call_123"}])),
+            tool_call_id: None,
+        }];
+
+        let result = filter_empty_messages(messages);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_think_tags() {
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: Some(MessageContent::String(
+                "<think> thinking process</think> actual response".to_string(),
+            )),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let result = remove_think_tags(messages);
+        assert_eq!(
+            result[0].content.as_ref().unwrap(),
+            &MessageContent::String(" actual response".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remove_think_tags_multiple() {
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: Some(MessageContent::String(
+                "<think> think 1</think> response 1<think> think 2</think> response 2".to_string(),
+            )),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let result = remove_think_tags(messages);
+        assert_eq!(
+            result[0].content.as_ref().unwrap(),
+            &MessageContent::String(" response 1 response 2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_merge_stop_words_both_present() {
+        let client_stop = vec!["<STOP1>".to_string(), "<STOP2>".to_string()];
+        let request_stop = vec!["<STOP2>".to_string(), "<STOP3>".to_string()];
+
+        let result = merge_stop_words(Some(&client_stop), Some(request_stop));
+        let result = result.unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&"<STOP1>".to_string()));
+        assert!(result.contains(&"<STOP2>".to_string()));
+        assert!(result.contains(&"<STOP3>".to_string()));
+    }
+
+    #[test]
+    fn test_merge_stop_words_client_only() {
+        let client_stop = vec!["<STOP1>".to_string()];
+
+        let result = merge_stop_words(Some(&client_stop), None);
+        assert_eq!(result, Some(vec!["<STOP1>".to_string()]));
+    }
+
+    #[test]
+    fn test_merge_stop_words_request_only() {
+        let request_stop = vec!["<STOP3>".to_string()];
+
+        let result = merge_stop_words(None, Some(request_stop));
+        assert_eq!(result, Some(vec!["<STOP3>".to_string()]));
+    }
+
+    #[test]
+    fn test_merge_stop_words_none() {
+        let result = merge_stop_words(None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_adjust_max_tokens_both_present_request_exceeds() {
+        let result = adjust_max_tokens(Some(1024), Some(8000));
+        assert_eq!(result, Some(1024));
+    }
+
+    #[test]
+    fn test_adjust_max_tokens_both_present_request_within_limit() {
+        let result = adjust_max_tokens(Some(1024), Some(500));
+        assert_eq!(result, Some(500));
+    }
+
+    #[test]
+    fn test_adjust_max_tokens_client_only() {
+        let result = adjust_max_tokens(Some(1024), None);
+        assert_eq!(result, Some(1024));
+    }
+
+    #[test]
+    fn test_adjust_max_tokens_request_only() {
+        let result = adjust_max_tokens(None, Some(500));
+        assert_eq!(result, Some(500));
+    }
+
+    #[test]
+    fn test_adjust_max_tokens_none() {
+        let result = adjust_max_tokens(None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_truncate_json_string_short() {
+        let value = json!("short string");
+        let result = truncate_json(&value);
+        assert_eq!(result, "short string");
+    }
+
+    #[test]
+    fn test_truncate_json_string_long() {
+        let long_string = "a".repeat(600);
+        let value = json!(long_string);
+        let result = truncate_json(&value);
+        let result_str = result.as_str().unwrap();
+        assert!(result_str.ends_with("...[TRUNCATED]"));
+        assert!(result_str.len() < 550);
+    }
+
+    #[test]
+    fn test_truncate_json_array() {
+        let arr: Vec<Value> = (0..15).map(|i| json!(i)).collect();
+        let value = Value::Array(arr);
+        let result = truncate_json(&value);
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 11);
+        assert!(arr[10].as_str().unwrap().contains("TRUNCATED"));
+    }
+
+    #[test]
+    fn test_apply_prefix_to_json_chat() {
+        let mut body = json!({
+            "choices": [
+                {"message": {"content": "Hello"}}
+            ]
+        });
+
+        apply_prefix_to_json(&mut body, "<PREFIX>", true);
+
+        assert_eq!(body["choices"][0]["message"]["content"], "<PREFIX>Hello");
+    }
+
+    #[test]
+    fn test_apply_prefix_to_json_completion() {
+        let mut body = json!({
+            "choices": [
+                {"text": "Hello"}
+            ]
+        });
+
+        apply_prefix_to_json(&mut body, "<PREFIX>", false);
+
+        assert_eq!(body["choices"][0]["text"], "<PREFIX>Hello");
+    }
+
+    #[test]
+    fn test_apply_prefix_empty() {
+        let mut body = json!({
+            "choices": [
+                {"message": {"content": "Hello"}}
+            ]
+        });
+
+        apply_prefix_to_json(&mut body, "", true);
+
+        assert_eq!(body["choices"][0]["message"]["content"], "Hello");
+    }
+}
