@@ -366,7 +366,8 @@ where
 
                 // 注入 AccessLogMeta 到 Response extensions
                 response.extensions_mut().insert(AccessLogMeta {
-                    model: "-".to_string(), // 解析失败，无法获知 model
+                    model: "-".to_string(),
+                    backend: "unknown".to_string(),
                     error: Some(final_error_msg),
                     request_body: Some(body_str),
                 });

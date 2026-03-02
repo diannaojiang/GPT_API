@@ -100,7 +100,8 @@ impl IntoResponse for AppError {
 
         // Inject error details for access logging
         response.extensions_mut().insert(AccessLogMeta {
-            model: "-".to_string(), // Can't easily access model here, default to "-"
+            model: "-".to_string(),
+            backend: "unknown".to_string(),
             error: Some(error_message),
             request_body: None,
         });

@@ -124,6 +124,7 @@ impl DispatcherService {
                     // 尝试注入错误日志元数据
                     response.extensions_mut().insert(AccessLogMeta {
                         model: current_model.clone(),
+                        backend: "unknown".to_string(),
                         error: Some(error_message),
                         request_body: None, // Body logging is handled closer to the request source if needed
                     });
@@ -167,6 +168,7 @@ impl DispatcherService {
                     if resp.extensions().get::<AccessLogMeta>().is_none() {
                         resp.extensions_mut().insert(AccessLogMeta {
                             model: model_name.to_string(),
+                            backend: "unknown".to_string(),
                             error: if status.is_client_error() {
                                 Some(format!("Upstream client error: {}", status))
                             } else {
@@ -238,6 +240,7 @@ impl DispatcherService {
                         if resp.extensions().get::<AccessLogMeta>().is_none() {
                             resp.extensions_mut().insert(AccessLogMeta {
                                 model: model_name.to_string(),
+                                backend: "unknown".to_string(),
                                 error: None,
                                 request_body: None,
                             });
@@ -248,6 +251,7 @@ impl DispatcherService {
                         if resp.extensions().get::<AccessLogMeta>().is_none() {
                             resp.extensions_mut().insert(AccessLogMeta {
                                 model: model_name.to_string(),
+                                backend: "unknown".to_string(),
                                 error: Some(format!("Upstream client error: {}", status)),
                                 request_body: None,
                             });
@@ -276,6 +280,7 @@ impl DispatcherService {
             } else {
                 resp.extensions_mut().insert(AccessLogMeta {
                     model: model_name.to_string(),
+                    backend: "unknown".to_string(),
                     error: Some("All fallback clients failed".to_string()),
                     request_body: None,
                 });

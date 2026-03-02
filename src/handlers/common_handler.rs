@@ -1,5 +1,7 @@
 use crate::app_error::AppError;
-use crate::metrics::prometheus::ERRORS_TOTAL;
+use crate::metrics::prometheus::{
+    ERRORS_TOTAL, LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX,
+};
 use crate::models::AccessLogMeta;
 use axum::{
     extract::State,
@@ -58,6 +60,7 @@ fn create_validation_error(msg: &str, payload: &RequestPayload) -> Response {
 
     response.extensions_mut().insert(AccessLogMeta {
         model: payload.get_model().to_string(),
+        backend: "unknown".to_string(),
         error: Some(msg.to_string()),
         request_body: Some(log_body),
     });
@@ -333,7 +336,8 @@ async fn process_non_streaming_response(
     if let Some(msg) = error_msg {
         let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
         resp.extensions_mut().insert(AccessLogMeta {
-            model: "-".to_string(), // Placeholder, will be updated by handle_request_logic
+            model: "-".to_string(),
+            backend: "unknown".to_string(), // Placeholder, will be updated by handle_request_logic
             error: Some(msg),
             request_body: Some(log_body),
         });

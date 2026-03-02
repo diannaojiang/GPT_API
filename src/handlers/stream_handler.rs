@@ -248,6 +248,7 @@ pub async fn process_streaming_response(
             let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
             resp.extensions_mut().insert(AccessLogMeta {
                 model: "-".to_string(),
+                backend: "unknown".to_string(),
                 error: Some(msg),
                 request_body: Some(log_body),
             });
