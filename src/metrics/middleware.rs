@@ -22,14 +22,22 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     ACTIVE_REQUESTS.dec();
     REQUESTS_TOTAL.inc();
 
-    LATENCY.observe(elapsed);
+    LATENCY
+        .with_label_values(&["unknown", "unknown"])
+        .observe(elapsed);
     sliding_window::update_latency_windows(elapsed);
     sliding_window::update_active_windows(ACTIVE_REQUESTS.get() as f64);
     sliding_window::update_success_windows(is_success);
 
-    LATENCY_1M_MAX.set(sliding_window::get_latency_1m_max());
-    LATENCY_10M_MAX.set(sliding_window::get_latency_10m_max());
-    LATENCY_1H_MAX.set(sliding_window::get_latency_1h_max());
+    LATENCY_1M_MAX
+        .with_label_values(&["unknown", "unknown"])
+        .set(sliding_window::get_latency_1m_max());
+    LATENCY_10M_MAX
+        .with_label_values(&["unknown", "unknown"])
+        .set(sliding_window::get_latency_10m_max());
+    LATENCY_1H_MAX
+        .with_label_values(&["unknown", "unknown"])
+        .set(sliding_window::get_latency_1h_max());
 
     ACTIVE_REQUESTS_1M_MAX.set(sliding_window::get_active_1m_max() as i64);
     ACTIVE_REQUESTS_10M_MAX.set(sliding_window::get_active_10m_max() as i64);

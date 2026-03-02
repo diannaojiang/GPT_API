@@ -1,6 +1,6 @@
 use prometheus::{
-    exponential_buckets, histogram_opts, register_gauge, register_histogram, register_int_gauge,
-    Counter, Gauge, Histogram, IntGauge,
+    exponential_buckets, register_gauge, register_gauge_vec, register_histogram_vec,
+    register_int_gauge, Counter, Gauge, GaugeVec, HistogramVec, IntGauge,
 };
 
 pub static REQUESTS_TOTAL: once_cell::sync::Lazy<Counter> = once_cell::sync::Lazy::new(|| {
@@ -58,63 +58,115 @@ pub static SUCCESS_RATE_1H: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy
     register_gauge!("gpt_api_success_rate_1h", "Success rate in last 1 hour").unwrap()
 });
 
-pub static TTFT: once_cell::sync::Lazy<Histogram> = once_cell::sync::Lazy::new(|| {
-    let opts = histogram_opts!(
+pub static TTFT: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy::new(|| {
+    register_histogram_vec!(
         "gpt_api_ttft_seconds",
         "Time to First Token in seconds",
+        &["model", "backend"],
         exponential_buckets(0.01, 2.0, 15).unwrap()
-    );
-    register_histogram!(opts).unwrap()
+    )
+    .unwrap()
 });
 
-pub static TTFT_10M_MAX: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_ttft_10m_max", "Max TTFT in 10 minutes").unwrap()
+pub static TTFT_1M_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_ttft_1m_max",
+        "Max TTFT in 1 minute",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static TTFT_1H_MAX: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_ttft_1h_max", "Max TTFT in 1 hour").unwrap()
+pub static TTFT_10M_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_ttft_10m_max",
+        "Max TTFT in 10 minutes",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static LATENCY: once_cell::sync::Lazy<Histogram> = once_cell::sync::Lazy::new(|| {
-    let opts = histogram_opts!(
+pub static TTFT_1H_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_ttft_1h_max",
+        "Max TTFT in 1 hour",
+        &["model", "backend"]
+    )
+    .unwrap()
+});
+
+pub static LATENCY: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy::new(|| {
+    register_histogram_vec!(
         "gpt_api_latency_seconds",
         "End-to-end latency in seconds",
+        &["model", "backend"],
         exponential_buckets(0.01, 2.0, 15).unwrap()
-    );
-    register_histogram!(opts).unwrap()
+    )
+    .unwrap()
 });
 
-pub static LATENCY_1M_MAX: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_latency_1m_max", "Max latency in 1 minute").unwrap()
+pub static LATENCY_1M_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_latency_1m_max",
+        "Max latency in 1 minute",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static LATENCY_10M_MAX: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_latency_10m_max", "Max latency in 10 minutes").unwrap()
+pub static LATENCY_10M_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_latency_10m_max",
+        "Max latency in 10 minutes",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static LATENCY_1H_MAX: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_latency_1h_max", "Max latency in 1 hour").unwrap()
+pub static LATENCY_1H_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_latency_1h_max",
+        "Max latency in 1 hour",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static TPS: once_cell::sync::Lazy<Histogram> = once_cell::sync::Lazy::new(|| {
-    let opts = histogram_opts!(
+pub static TPS: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy::new(|| {
+    register_histogram_vec!(
         "gpt_api_tps",
         "Tokens per second",
+        &["model", "backend"],
         exponential_buckets(1.0, 2.0, 15).unwrap()
-    );
-    register_histogram!(opts).unwrap()
+    )
+    .unwrap()
 });
 
-pub static TPS_1M_AVG: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_tps_1m_avg", "Average TPS in 1 minute").unwrap()
+pub static TPS_1M_AVG: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_tps_1m_avg",
+        "Average TPS in 1 minute",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static TPS_10M_AVG: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_tps_10m_avg", "Average TPS in 10 minutes").unwrap()
+pub static TPS_10M_AVG: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_tps_10m_avg",
+        "Average TPS in 10 minutes",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
-pub static TPS_1H_AVG: once_cell::sync::Lazy<Gauge> = once_cell::sync::Lazy::new(|| {
-    register_gauge!("gpt_api_tps_1h_avg", "Average TPS in 1 hour").unwrap()
+pub static TPS_1H_AVG: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
+        "gpt_api_tps_1h_avg",
+        "Average TPS in 1 hour",
+        &["model", "backend"]
+    )
+    .unwrap()
 });
 
 pub static RPS: once_cell::sync::Lazy<Gauge> =
