@@ -1,7 +1,5 @@
 use crate::app_error::AppError;
-use crate::metrics::prometheus::{
-    ERRORS_TOTAL, LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX,
-};
+use crate::metrics::prometheus::ERRORS_TOTAL;
 use crate::models::AccessLogMeta;
 use axum::{
     extract::State,

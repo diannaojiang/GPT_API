@@ -3,13 +3,13 @@ use crate::client::client_manager::ClientManager;
 use crate::client::routing::select_clients;
 use crate::config::config_manager::ConfigManager;
 use crate::config::types::ClientConfig;
+use crate::metrics::prometheus::FAILOVER_TOTAL;
 use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
-use crate::metrics::prometheus::FAILOVER_TOTAL;
 
 #[derive(Clone)]
 pub struct DispatcherService {
