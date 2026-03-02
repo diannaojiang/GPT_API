@@ -3,7 +3,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::types::Config;
 use crate::state::app_state::AppState;
@@ -55,9 +55,13 @@ pub async fn init_db_pool(_config: &Config) -> Result<SqlitePool, sqlx::Error> {
 pub async fn check_and_rotate(app_state: &Arc<AppState>) {
     let _lock = app_state.db_rotation_lock.lock().await;
     let db_path_str = std::env::var("RECD_PATH").unwrap_or_else(|_| "./record.db".to_string());
+
+    warn!("[DB ROTATION] Checking database at: {}", db_path_str);
+
     let db_path = Path::new(&db_path_str);
 
     if !db_path.exists() {
+        debug!("[DB ROTATION] Database file does not exist, skipping");
         return;
     }
 
@@ -72,19 +76,38 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
     };
     let last_month_str = format!("{}{:02}", last_month_year, last_month);
 
+    warn!(
+        "[DB ROTATION] Current: {}/{}, Looking for: record_{}",
+        now.year(),
+        now.month(),
+        last_month_str
+    );
+
     // 检查是否存在上个月的归档文件
     let needs_rotation = match fs::read_dir(db_dir) {
         Ok(entries) => {
+            let entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
             let has_last_month_archive = entries
-                .filter_map(|e| e.ok())
+                .iter()
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .any(|name| name.starts_with(&format!("record_{}", last_month_str)));
+
+            warn!(
+                "[DB ROTATION] Found {} files in dir, has_last_month_archive: {}",
+                entries.len(),
+                has_last_month_archive
+            );
+
             !has_last_month_archive
         }
-        Err(_) => true,
+        Err(e) => {
+            error!("[DB ROTATION] Failed to read directory: {}", e);
+            true
+        }
     };
 
     if !needs_rotation {
+        debug!("[DB ROTATION] No rotation needed, archive exists");
         return;
     }
 
