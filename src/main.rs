@@ -56,7 +56,7 @@ fn main() {
         let rotation_interval: u64 = std::env::var("DB_ROTATION_CHECK_INTERVAL_SEC")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
+            .unwrap_or(3600); // 1 hour
 
         tokio::spawn(async move {
             let mut interval =

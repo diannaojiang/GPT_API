@@ -94,7 +94,7 @@ docker run -d \
 | :--- | :--- | :--- |
 | `SERVER_PORT` | `8000` | 服务监听端口 |
 | `RECD_PATH` | `./record.db` | SQLite 数据库文件路径 |
-| `DB_ROTATION_CHECK_INTERVAL_SEC` | `60` | 数据库轮转检查间隔（秒） |
+| `DB_ROTATION_CHECK_INTERVAL_SEC` | `3600` | 数据库轮转检查间隔（秒） |
 | `RUST_LOG` | `info` | 日志级别 (`error`, `warn`, `info`, `debug`, `trace`) |
 
 ---
