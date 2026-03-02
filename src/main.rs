@@ -58,6 +58,23 @@ fn main() {
             .and_then(|v| v.parse().ok())
             .unwrap_or(3600); // 1 hour
 
+        // Run rotation check immediately on startup
+        check_and_rotate(&rotation_state).await;
+
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(rotation_interval));
+            loop {
+                interval.tick().await;
+                check_and_rotate(&rotation_state).await;
+            }
+        });
+        let rotation_state = app_state.clone();
+        let rotation_interval: u64 = std::env::var("DB_ROTATION_CHECK_INTERVAL_SEC")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600); // 1 hour
+
         tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(tokio::time::Duration::from_secs(rotation_interval));
