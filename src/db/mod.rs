@@ -70,14 +70,15 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
         }
     };
 
-    let mod_time = match metadata.modified() {
+    // Use created() instead of modified() - ctime doesn't change on SQLite writes,
+    // only on attribute changes, making it reliable for monthly rotation detection
+    let mod_time = match metadata.created() {
         Ok(time) => time,
         Err(e) => {
-            error!("Failed to get modification time for database file: {}", e);
+            error!("Failed to get creation time for database file: {}", e);
             return;
         }
     };
-
     let mod_datetime: DateTime<Local> = mod_time.into();
     let now = Local::now();
 
