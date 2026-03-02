@@ -54,11 +54,17 @@ pub async fn init_db_pool(_config: &Config) -> Result<SqlitePool, sqlx::Error> {
 /// 归档上个月的数据：检查是否存在上个月的归档文件，不存在则轮转
 pub async fn check_and_rotate(app_state: &Arc<AppState>) {
     let _lock = app_state.db_rotation_lock.lock().await;
-    let db_path_str = std::env::var("RECD_PATH").unwrap_or_else(|_| "./record.db".to_string());
+    let db_path_with_prefix =
+        std::env::var("RECD_PATH").unwrap_or_else(|_| "sqlite:./record.db".to_string());
+
+    // Strip the "sqlite:" prefix to get the actual file path
+    let db_path_str = db_path_with_prefix
+        .strip_prefix("sqlite:")
+        .unwrap_or(&db_path_with_prefix);
 
     warn!("[DB ROTATION] Checking database at: {}", db_path_str);
 
-    let db_path = Path::new(&db_path_str);
+    let db_path = Path::new(db_path_str);
 
     if !db_path.exists() {
         debug!("[DB ROTATION] Database file does not exist, skipping");
