@@ -76,11 +76,18 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
         }
     };
 
-    let mod_time = match metadata.modified() {
+    // Use created time (birth time) - works on Linux ext4
+    let mod_time = match metadata.created() {
         Ok(time) => time,
         Err(e) => {
-            error!("Failed to get modification time for database file: {}", e);
-            return;
+            // Fallback to modified time if created not available
+            match metadata.modified() {
+                Ok(time) => time,
+                Err(_) => {
+                    error!("Failed to get both creation and modification time: {}", e);
+                    return;
+                }
+            }
         }
     };
 
