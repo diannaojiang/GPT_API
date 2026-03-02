@@ -2,6 +2,11 @@ use crate::app_error::AppError;
 use crate::config::types::ClientConfig;
 use crate::db::records::log_non_streaming_request;
 use crate::handlers::utils::truncate_json;
+use crate::metrics::prometheus::{
+    TOKENS_TOTAL, TPS, TPS_10M_AVG, TPS_1H_AVG, TPS_1M_AVG, TTFT, TTFT_10M_MAX, TTFT_1H_MAX,
+    TTFT_1M_MAX,
+};
+use crate::metrics::sliding_window;
 use crate::models::requests::RequestPayload;
 use crate::models::AccessLogMeta;
 use crate::state::app_state::AppState;
@@ -18,6 +23,7 @@ use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -120,12 +126,16 @@ async fn stream_logger_task(
     request_body: Value,
     client_ip: String,
     is_chat: bool,
+    model: String,
+    backend: String,
+    start_time: Instant,
 ) {
     let mut accumulator = StreamAccumulator::new();
     let mut last_chunk: Option<Value> = None;
     let mut first_chunk: Option<Value> = None;
     let mut captured_usage: Option<Value> = None;
     let mut captured_finish_reason: Option<String> = None;
+    let mut _ttft_recorded = false;
 
     while let Some(chunk_str) = rx.recv().await {
         // Deserialize in background task
@@ -139,12 +149,73 @@ async fn stream_logger_task(
 
         if first_chunk.is_none() {
             first_chunk = Some(chunk.clone());
+            // Record TTFT on first chunk with content
+            if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+                if let Some(choice) = choices.first() {
+                    let has_content = if is_chat {
+                        choice
+                            .get("delta")
+                            .and_then(|d| d.get("content"))
+                            .and_then(|s| s.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                    } else {
+                        choice
+                            .get("text")
+                            .and_then(|s| s.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                    };
+                    if has_content {
+                        let ttft = start_time.elapsed().as_secs_f64();
+                        TTFT.with_label_values(&[&model, &backend]).observe(ttft);
+                        sliding_window::update_ttft_windows(ttft);
+                        TTFT_1M_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_1m_max());
+                        TTFT_10M_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_10m_max());
+                        TTFT_1H_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_1h_max());
+                        _ttft_recorded = true;
+                    }
+                }
+            }
         }
         last_chunk = Some(chunk.clone());
 
         // Capture Usage (often in the last chunk)
         if let Some(u) = chunk.get("usage") {
             captured_usage = Some(u.clone());
+            // Record TPS when we have usage info
+            if let (Some(completion), Some(prompt)) = (
+                u.get("completion_tokens").and_then(|v| v.as_u64()),
+                u.get("prompt_tokens").and_then(|v| v.as_u64()),
+            ) {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                if completion > 0 && elapsed > 0.0 {
+                    let tps = completion as f64 / elapsed;
+                    TPS.with_label_values(&[&model, &backend]).observe(tps);
+                    sliding_window::update_tps_windows(tps);
+                    TPS_1M_AVG
+                        .with_label_values(&[&model, &backend])
+                        .set(sliding_window::get_tps_1m_avg());
+                    TPS_10M_AVG
+                        .with_label_values(&[&model, &backend])
+                        .set(sliding_window::get_tps_10m_avg());
+                    TPS_1H_AVG
+                        .with_label_values(&[&model, &backend])
+                        .set(sliding_window::get_tps_1h_avg());
+                }
+                TOKENS_TOTAL
+                    .with_label_values(&[&model, "completion"])
+                    .inc_by(completion as f64);
+                TOKENS_TOTAL
+                    .with_label_values(&[&model, "prompt"])
+                    .inc_by(prompt as f64);
+            }
         }
 
         if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
@@ -268,6 +339,18 @@ pub async fn process_streaming_response(
     let request_body_clone = request_body.clone();
     let client_ip_clone = client_ip.clone();
 
+    // Extract model from payload
+    let model_name = match &payload {
+        RequestPayload::Chat(c) => c.model.clone(),
+        RequestPayload::Completion(c) => c.model.clone(),
+        RequestPayload::Embedding(e) => e.model.clone(),
+        RequestPayload::Rerank(_) => "rerank".to_string(),
+        RequestPayload::Score(_) => "score".to_string(),
+        RequestPayload::Classify(_) => "classify".to_string(),
+    };
+    let backend = client_config.name.clone();
+    let stream_start_time = Instant::now();
+
     tokio::spawn(async move {
         stream_logger_task(
             rx,
@@ -277,6 +360,9 @@ pub async fn process_streaming_response(
             request_body_clone,
             client_ip_clone,
             is_chat,
+            model_name,
+            backend,
+            stream_start_time,
         )
         .await;
     });
