@@ -136,3 +136,14 @@ pub fn get_success_10m() -> f64 {
 pub fn get_success_1h() -> f64 {
     SUCCESS_WINDOW_1H.avg()
 }
+
+// Overall success rate (across all endpoints)
+static SUCCESS_WINDOW_OVERALL: Lazy<SlidingWindow> = Lazy::new(|| SlidingWindow::new(3600));
+
+pub fn update_success_overall(success: bool) {
+    SUCCESS_WINDOW_OVERALL.push(if success { 1.0 } else { 0.0 });
+}
+
+pub fn get_success_overall() -> f64 {
+    SUCCESS_WINDOW_OVERALL.avg()
+}

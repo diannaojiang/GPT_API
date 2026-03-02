@@ -84,7 +84,11 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
 
     let earliest_time = match (mtime, ctime) {
         (Some(mt), Some(ct)) => {
-            if mt < ct { mt } else { ct }
+            if mt < ct {
+                mt
+            } else {
+                ct
+            }
         }
         (Some(mt), None) => mt,
         (None, Some(ct)) => ct,

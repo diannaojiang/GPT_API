@@ -211,15 +211,6 @@ pub static TOKENS_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::La
     .unwrap()
 });
 
-pub static BACKEND_UP: once_cell::sync::Lazy<IntGaugeVec> = once_cell::sync::Lazy::new(|| {
-    register_int_gauge_vec!(
-        "gpt_api_backend_up",
-        "Backend status (1=up, 0=down)",
-        &["backend"]
-    )
-    .unwrap()
-});
-
 pub static FAILOVER_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::Lazy::new(|| {
     register_counter_vec!(
         "gpt_api_failover_total",

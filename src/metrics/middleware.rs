@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::metrics::prometheus::{
     ACTIVE_REQUESTS, ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX,
-    LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS,
+    LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
     SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M,
 };
 use crate::metrics::sliding_window;
@@ -35,7 +35,7 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         ACTIVE_REQUESTS.with_label_values(&[&endpoint]).get() as f64
     );
     sliding_window::update_success_windows(is_success);
-
+    sliding_window::update_success_overall(is_success);
     LATENCY_1M_MAX
         .with_label_values(&["unknown", "unknown"])
         .set(sliding_window::get_latency_1m_max());
@@ -66,6 +66,10 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .with_label_values(&[&endpoint])
         .set(sliding_window::get_success_1h());
 
+    // Update overall success rate
+    SUCCESS_RATE
+        .with_label_values(&[&endpoint])
+        .set(if is_success { 1.0 } else { 0.0 });
     RPS.with_label_values(&[&endpoint]).set(1.0 / elapsed);
 
     response
