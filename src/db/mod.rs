@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Datelike, Local};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::fs;
 use std::path::Path;
@@ -51,7 +51,7 @@ pub async fn init_db_pool(_config: &Config) -> Result<SqlitePool, sqlx::Error> {
 }
 
 /// 检查并轮换数据库
-/// 通过检查是否存在当月的归档文件来判断是否需要轮转
+/// 归档上个月的数据：检查是否存在上个月的归档文件，不存在则轮转
 pub async fn check_and_rotate(app_state: &Arc<AppState>) {
     let _lock = app_state.db_rotation_lock.lock().await;
     let db_path_str = std::env::var("RECD_PATH").unwrap_or_else(|_| "./record.db".to_string());
@@ -63,16 +63,23 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
 
     let db_dir = db_path.parent().unwrap_or_else(|| Path::new("."));
     let now = Local::now();
-    let current_month_str = now.format("%Y%m").to_string();
 
-    // Check if there are archives from current month (meaning we already rotated this month)
+    // 计算上个月的年月
+    let (last_month_year, last_month) = if now.month() == 1 {
+        (now.year() - 1, 12)
+    } else {
+        (now.year(), now.month() - 1)
+    };
+    let last_month_str = format!("{}{:02}", last_month_year, last_month);
+
+    // 检查是否存在上个月的归档文件
     let needs_rotation = match fs::read_dir(db_dir) {
         Ok(entries) => {
-            let has_current_month_archive = entries
+            let has_last_month_archive = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.file_name().to_string_lossy().to_string())
-                .any(|name| name.starts_with(&format!("record_{}", current_month_str)));
-            !has_current_month_archive
+                .any(|name| name.starts_with(&format!("record_{}", last_month_str)));
+            !has_last_month_archive
         }
         Err(_) => true,
     };
@@ -82,11 +89,12 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
     }
 
     let archive_dir = db_path.parent().unwrap_or_else(|| Path::new("."));
-    let archive_filename = format!("record_{}.db", current_month_str);
+    let archive_filename = format!("record_{}.db", last_month_str);
     let mut archive_path = archive_dir.join(&archive_filename);
 
     info!(
-        "Database rotation needed. Archiving {} to {}",
+        "Database rotation needed (archiving {} data). Archiving {} to {}",
+        last_month_str,
         db_path.display(),
         archive_path.display()
     );
@@ -96,7 +104,7 @@ pub async fn check_and_rotate(app_state: &Arc<AppState>) {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let new_archive_filename = format!("record_{}_{}.db", current_month_str, timestamp);
+        let new_archive_filename = format!("record_{}_{}.db", last_month_str, timestamp);
         archive_path = archive_dir.join(new_archive_filename);
         warn!(
             "Archive file already exists. Renaming to {}",
