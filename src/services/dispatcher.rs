@@ -9,6 +9,7 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
+use crate::metrics::prometheus::FAILOVER_TOTAL;
 
 #[derive(Clone)]
 pub struct DispatcherService {
@@ -106,6 +107,8 @@ impl DispatcherService {
                         "All clients for model '{}' failed or triggered fallback. Switching to fallback model: '{}'",
                         current_model, fallback_model
                     );
+                    // Record failover event
+                    FAILOVER_TOTAL.with_label_values(&[&current_model]).inc();
                     current_model = fallback_model;
                     continue;
                 }

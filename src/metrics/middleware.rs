@@ -26,8 +26,15 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .with_label_values(&[&endpoint, &status_str])
         .inc();
 
+    // Try to get model/backend from response extensions
+    let (model_str, backend_str) = response
+        .extensions()
+        .get::<crate::models::AccessLogMeta>()
+        .map(|meta| (meta.model.as_str(), meta.backend.as_str()))
+        .unwrap_or(("unknown", "unknown"));
+
     LATENCY
-        .with_label_values(&["unknown", "unknown"])
+        .with_label_values(&[model_str, backend_str])
         .observe(elapsed);
 
     sliding_window::update_latency_windows(elapsed);
@@ -37,13 +44,13 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     sliding_window::update_success_windows(is_success);
     sliding_window::update_success_overall(is_success);
     LATENCY_1M_MAX
-        .with_label_values(&["unknown", "unknown"])
+        .with_label_values(&[model_str, backend_str])
         .set(sliding_window::get_latency_1m_max());
     LATENCY_10M_MAX
-        .with_label_values(&["unknown", "unknown"])
+        .with_label_values(&[model_str, backend_str])
         .set(sliding_window::get_latency_10m_max());
     LATENCY_1H_MAX
-        .with_label_values(&["unknown", "unknown"])
+        .with_label_values(&[model_str, backend_str])
         .set(sliding_window::get_latency_1h_max());
 
     ACTIVE_REQUESTS_1M_MAX
@@ -66,7 +73,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .with_label_values(&[&endpoint])
         .set(sliding_window::get_success_1h());
 
-    // Update overall success rate
     SUCCESS_RATE
         .with_label_values(&[&endpoint])
         .set(if is_success { 1.0 } else { 0.0 });
