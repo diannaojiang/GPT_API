@@ -1,4 +1,5 @@
 use crate::app_error::AppError;
+use crate::metrics::prometheus::ERRORS_TOTAL;
 use crate::models::AccessLogMeta;
 use axum::{
     extract::State,
@@ -153,6 +154,23 @@ pub async fn handle_request_logic(
             },
         )
         .await;
+
+    let _model = initial_model.as_str();
+    let status = response.status().as_u16();
+
+    // Record errors
+    if status >= 400 {
+        let error_type = if status == 401 || status == 403 {
+            "auth"
+        } else if status == 429 {
+            "rate_limit"
+        } else if status >= 500 {
+            "server_error"
+        } else {
+            "client_error"
+        };
+        ERRORS_TOTAL.with_label_values(&[error_type]).inc();
+    }
 
     // 如果响应中包含日志元数据但缺少 request_body（通常发生在所有上游都失败时），
     // 在此处补全 request_body 以便记录日志。
