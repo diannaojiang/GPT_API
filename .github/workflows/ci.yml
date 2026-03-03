@@ -61,6 +61,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create config directory
+        run: mkdir -p config
+
       - name: Get Commit Count
         run: echo "COUNT=$(git rev-list --count HEAD)" >> $GITHUB_ENV
 

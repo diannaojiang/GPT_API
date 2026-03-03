@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 Cargo.lock
-/config
+config/config.yaml
+config/*.yaml
 /logs
 record.db
