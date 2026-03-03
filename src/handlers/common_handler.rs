@@ -288,6 +288,9 @@ async fn process_non_streaming_response(
     response: reqwest::Response,
 ) -> Result<Response, AppError> {
     let status = response.status();
+
+    // Get AccessLogMeta from response BEFORE consuming it with bytes()
+    let access_log_meta = response.extensions().get::<AccessLogMeta>().cloned();
     // let mut response_body: Value = response.json().await?;
     // 使用 simd-json 加速大 JSON 解析
     let body_bytes = response.bytes().await?;
@@ -336,7 +339,12 @@ async fn process_non_streaming_response(
         });
     }
 
+    // Create new response from JSON body
     let mut resp = Json(response_body).into_response();
+
+    if let Some(meta) = access_log_meta {
+        resp.extensions_mut().insert(meta);
+    }
     // 如果有状态码不一致（例如 Json 可能会默认 200，或者我们需要显式设置 status）， Axum 的 Json extractor 通常会设置 200。
     // 我们需要手动把 reqwest 的 status 设置回去。
     *resp.status_mut() = status;
