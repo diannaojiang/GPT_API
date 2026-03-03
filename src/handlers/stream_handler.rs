@@ -149,24 +149,25 @@ async fn stream_logger_task(
 
         if first_chunk.is_none() {
             first_chunk = Some(chunk.clone());
-            // Record TTFT on first chunk with content
+            // Record TTFT on first chunk with any delta (not just non-empty content)
             if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
                 if let Some(choice) = choices.first() {
-                    let has_content = if is_chat {
-                        choice
-                            .get("delta")
-                            .and_then(|d| d.get("content"))
-                            .and_then(|s| s.as_str())
-                            .map(|s| !s.is_empty())
-                            .unwrap_or(false)
-                    } else {
-                        choice
-                            .get("text")
-                            .and_then(|s| s.as_str())
-                            .map(|s| !s.is_empty())
-                            .unwrap_or(false)
-                    };
-                    if has_content {
+                    // Record TTFT on first delta - whether content is empty or not
+                    if is_chat && choice.get("delta").is_some() {
+                        let ttft = start_time.elapsed().as_secs_f64();
+                        TTFT.with_label_values(&[&model, &backend]).observe(ttft);
+                        sliding_window::update_ttft_windows(ttft);
+                        TTFT_1M_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_1m_max());
+                        TTFT_10M_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_10m_max());
+                        TTFT_1H_MAX
+                            .with_label_values(&[&model, &backend])
+                            .set(sliding_window::get_ttft_1h_max());
+                        _ttft_recorded = true;
+                    } else if !is_chat && choice.get("text").is_some() {
                         let ttft = start_time.elapsed().as_secs_f64();
                         TTFT.with_label_values(&[&model, &backend]).observe(ttft);
                         sliding_window::update_ttft_windows(ttft);
