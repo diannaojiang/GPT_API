@@ -55,16 +55,39 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let is_success = status >= 200 && status < 400;
 
     // Get actual model/backend from response extensions
-    let (model_str, backend_str) = response
-        .extensions()
-        .get::<crate::models::AccessLogMeta>()
+    let access_log_meta = response.extensions().get::<crate::models::AccessLogMeta>();
+    let (model_str, backend_str) = access_log_meta
         .map(|meta| (meta.model.as_str(), meta.backend.as_str()))
         .unwrap_or((&initial_model, pending_backend));
 
-    // Decrement the pending counter
-    ACTIVE_REQUESTS
-        .with_label_values(&[&endpoint, &initial_model, pending_backend])
-        .dec();
+    // If we have AccessLogMeta, switch from pending to actual backend
+    // This tracks requests during the time between routing decision and response completion
+    let has_access_log = access_log_meta.is_some();
+    if has_access_log {
+        // Decrement pending counter
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, &initial_model, pending_backend])
+            .dec();
+
+        // Increment actual backend counter
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, model_str, backend_str])
+            .inc();
+    }
+
+    // Decrement the pending counter (only if not already done in the switch above)
+    if !has_access_log {
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, &initial_model, pending_backend])
+            .dec();
+    }
+
+    // Decrement actual backend counter to complete the tracking
+    if has_access_log {
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, model_str, backend_str])
+            .dec();
+    }
 
     REQUESTS_TOTAL
         .with_label_values(&[&endpoint, &status_str, model_str, backend_str])
