@@ -350,6 +350,10 @@ pub async fn process_streaming_response(
         RequestPayload::Classify(_) => "classify".to_string(),
     };
     let backend = client_config.name.clone();
+
+    // Clone for AccessLogMeta (before they're moved into async block)
+    let model_for_meta = model_name.clone();
+    let backend_for_meta = backend.clone();
     let stream_start_time = Instant::now();
 
     tokio::spawn(async move {
@@ -418,9 +422,19 @@ pub async fn process_streaming_response(
         }
     });
 
-    Ok(Sse::new(sse_stream)
+    // Create response and add AccessLogMeta for metrics tracking
+    let mut response = Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
-        .into_response())
+        .into_response();
+
+    response.extensions_mut().insert(AccessLogMeta {
+        model: model_for_meta,
+        backend: backend_for_meta,
+        error: None,
+        request_body: None,
+    });
+
+    Ok(response)
 }
 
 pub fn extract_error_msg(body: &Value) -> Option<String> {
