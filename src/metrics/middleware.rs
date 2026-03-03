@@ -60,6 +60,11 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .inc();
 
     // Then decrement the actual counter (request completed)
+    // 重要：在递减前记录活动请求数到滑动窗口（捕获峰值）
+    let current_active = ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, model_str, backend_str])
+        .get();
+    sliding_window::update_active_windows(current_active as f64);
     ACTIVE_REQUESTS
         .with_label_values(&[&endpoint, model_str, backend_str])
         .dec();
@@ -73,11 +78,7 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .observe(elapsed);
 
     sliding_window::update_latency_windows(elapsed);
-    sliding_window::update_active_windows(
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, model_str, backend_str])
-            .get() as f64,
-    );
+    sliding_window::update_success_windows(is_success);
     sliding_window::update_success_windows(is_success);
     sliding_window::update_success_overall(is_success);
     LATENCY_1M_MAX
