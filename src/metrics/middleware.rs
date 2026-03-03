@@ -76,6 +76,9 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
 
     sliding_window::update_latency_windows(elapsed);
     sliding_window::update_success_overall(is_success);
+
+    // Update success windows for per-backend success rate
+    sliding_window::update_success_windows(is_success);
     LATENCY_1M_MAX
         .with_label_values(&[model_str, backend_str])
         .set(sliding_window::get_latency_1m_max());
