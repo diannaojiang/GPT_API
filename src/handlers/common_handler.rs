@@ -170,6 +170,28 @@ pub async fn handle_request_logic(
         } else {
             "client_error"
         };
+
+        // Get backend from response extensions if available
+        let backend_str = response
+            .extensions()
+            .get::<AccessLogMeta>()
+            .map(|m| m.backend.as_str())
+            .unwrap_or("unknown");
+
+        ERRORS_TOTAL
+            .with_label_values(&[error_type, &initial_model, backend_str])
+            .inc();
+    }
+    if status >= 400 {
+        let error_type = if status == 401 || status == 403 {
+            "auth"
+        } else if status == 429 {
+            "rate_limit"
+        } else if status >= 500 {
+            "server_error"
+        } else {
+            "client_error"
+        };
         ERRORS_TOTAL.with_label_values(&[error_type]).inc();
     }
 

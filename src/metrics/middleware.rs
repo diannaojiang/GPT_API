@@ -8,11 +8,32 @@ use crate::metrics::prometheus::{
 };
 use crate::metrics::sliding_window;
 
+/// Helper to extract model from request body
+fn extract_model_from_request(req: &Request<Body>) -> String {
+    // Try to get model from query params first
+    if let Some(query) = req.uri().query() {
+        for param in query.split('&') {
+            if param.starts_with("model=") {
+                return param[6..].to_string();
+            }
+        }
+    }
+    // Default to unknown - actual model will be set from response extensions
+    "unknown".to_string()
+}
+
 pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
     let endpoint = req.uri().path().to_string();
 
-    ACTIVE_REQUESTS.with_label_values(&[&endpoint]).inc();
+    // Extract model from request at the start (may be updated later from response)
+    let initial_model = extract_model_from_request(&req);
+    let pending_backend = "pending";
+
+    // Increment active requests with initial model/backend
+    ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, &initial_model, pending_backend])
+        .inc();
 
     let response = next.run(req).await;
 
@@ -21,17 +42,31 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let status_str = status.to_string();
     let is_success = status >= 200 && status < 400;
 
-    ACTIVE_REQUESTS.with_label_values(&[&endpoint]).dec();
-    REQUESTS_TOTAL
-        .with_label_values(&[&endpoint, &status_str])
-        .inc();
-
-    // Try to get model/backend from response extensions
+    // Get actual model/backend from response extensions
     let (model_str, backend_str) = response
         .extensions()
         .get::<crate::models::AccessLogMeta>()
         .map(|meta| (meta.model.as_str(), meta.backend.as_str()))
-        .unwrap_or(("unknown", "unknown"));
+        .unwrap_or((&initial_model, pending_backend));
+
+    // Decrement the pending counter
+    ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, &initial_model, pending_backend])
+        .dec();
+
+    // Increment actual counter (request completed)
+    ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, model_str, backend_str])
+        .inc();
+
+    // Then decrement the actual counter (request completed)
+    ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, model_str, backend_str])
+        .dec();
+
+    REQUESTS_TOTAL
+        .with_label_values(&[&endpoint, &status_str, model_str, backend_str])
+        .inc();
 
     LATENCY
         .with_label_values(&[model_str, backend_str])
@@ -39,7 +74,9 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
 
     sliding_window::update_latency_windows(elapsed);
     sliding_window::update_active_windows(
-        ACTIVE_REQUESTS.with_label_values(&[&endpoint]).get() as f64
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, model_str, backend_str])
+            .get() as f64,
     );
     sliding_window::update_success_windows(is_success);
     sliding_window::update_success_overall(is_success);
@@ -54,27 +91,27 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .set(sliding_window::get_latency_1h_max());
 
     ACTIVE_REQUESTS_1M_MAX
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_active_1m_max() as i64);
     ACTIVE_REQUESTS_10M_MAX
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_active_10m_max() as i64);
     ACTIVE_REQUESTS_1H_MAX
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_active_1h_max() as i64);
 
     SUCCESS_RATE_1M
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_success_1m());
     SUCCESS_RATE_10M
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_success_10m());
     SUCCESS_RATE_1H
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(sliding_window::get_success_1h());
 
     SUCCESS_RATE
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[&endpoint, model_str, backend_str])
         .set(if is_success { 1.0 } else { 0.0 });
     RPS.with_label_values(&[&endpoint]).set(1.0 / elapsed);
 

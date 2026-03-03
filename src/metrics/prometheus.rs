@@ -7,7 +7,7 @@ pub static REQUESTS_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::
     register_counter_vec!(
         "gpt_api_requests_total",
         "Total number of HTTP requests",
-        &["endpoint", "status"]
+        &["endpoint", "status", "model", "backend"]
     )
     .unwrap()
 });
@@ -16,7 +16,7 @@ pub static ACTIVE_REQUESTS: once_cell::sync::Lazy<IntGaugeVec> = once_cell::sync
     register_int_gauge_vec!(
         "gpt_api_active_requests",
         "Current active requests",
-        &["endpoint"]
+        &["endpoint", "model", "backend"]
     )
     .unwrap()
 });
@@ -26,7 +26,7 @@ pub static ACTIVE_REQUESTS_1M_MAX: once_cell::sync::Lazy<IntGaugeVec> =
         register_int_gauge_vec!(
             "gpt_api_active_requests_1m_max",
             "Max active requests in 1 minute",
-            &["endpoint"]
+            &["endpoint", "model", "backend"]
         )
         .unwrap()
     });
@@ -36,7 +36,7 @@ pub static ACTIVE_REQUESTS_10M_MAX: once_cell::sync::Lazy<IntGaugeVec> =
         register_int_gauge_vec!(
             "gpt_api_active_requests_10m_max",
             "Max active requests in 10 minutes",
-            &["endpoint"]
+            &["endpoint", "model", "backend"]
         )
         .unwrap()
     });
@@ -46,7 +46,7 @@ pub static ACTIVE_REQUESTS_1H_MAX: once_cell::sync::Lazy<IntGaugeVec> =
         register_int_gauge_vec!(
             "gpt_api_active_requests_1h_max",
             "Max active requests in 1 hour",
-            &["endpoint"]
+            &["endpoint", "model", "backend"]
         )
         .unwrap()
     });
@@ -55,7 +55,7 @@ pub static SUCCESS_RATE: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy
     register_gauge_vec!(
         "gpt_api_success_rate",
         "Overall success rate",
-        &["endpoint"]
+        &["endpoint", "model", "backend"]
     )
     .unwrap()
 });
@@ -64,7 +64,7 @@ pub static SUCCESS_RATE_1M: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::L
     register_gauge_vec!(
         "gpt_api_success_rate_1m",
         "Success rate in last 1 minute",
-        &["endpoint"]
+        &["endpoint", "model", "backend"]
     )
     .unwrap()
 });
@@ -73,7 +73,7 @@ pub static SUCCESS_RATE_10M: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::
     register_gauge_vec!(
         "gpt_api_success_rate_10m",
         "Success rate in last 10 minutes",
-        &["endpoint"]
+        &["endpoint", "model", "backend"]
     )
     .unwrap()
 });
@@ -82,7 +82,7 @@ pub static SUCCESS_RATE_1H: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::L
     register_gauge_vec!(
         "gpt_api_success_rate_1h",
         "Success rate in last 1 hour",
-        &["endpoint"]
+        &["endpoint", "model", "backend"]
     )
     .unwrap()
 });
@@ -221,5 +221,10 @@ pub static FAILOVER_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::
 });
 
 pub static ERRORS_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::Lazy::new(|| {
-    register_counter_vec!("gpt_api_errors_total", "Total errors", &["error_type"]).unwrap()
+    register_counter_vec!(
+        "gpt_api_errors_total",
+        "Total errors",
+        &["error_type", "model", "backend"]
+    )
+    .unwrap()
 });
