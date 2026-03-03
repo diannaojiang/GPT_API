@@ -54,6 +54,13 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .with_label_values(&[&endpoint, &initial_model, pending_backend])
         .dec();
 
+    // Decrement the actual backend counter (was incremented in handler after routing)
+    if model_str != "-" && backend_str != "unknown" {
+        ACTIVE_REQUESTS
+            .with_label_values(&["-", model_str, backend_str])
+            .dec();
+    }
+
     REQUESTS_TOTAL
         .with_label_values(&[&endpoint, &status_str, model_str, backend_str])
         .inc();
@@ -63,7 +70,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
         .observe(elapsed);
 
     sliding_window::update_latency_windows(elapsed);
-    sliding_window::update_success_overall(is_success);
     sliding_window::update_success_overall(is_success);
     LATENCY_1M_MAX
         .with_label_values(&[model_str, backend_str])
