@@ -8,6 +8,13 @@ use crate::metrics::prometheus::{
 };
 use crate::metrics::sliding_window;
 
+/// Endpoints that should be excluded from metrics
+const METRICS_SKIP_ENDPOINTS: &[&str] = &["/metrics", "/health", "/v1/models"];
+
+fn should_skip_metrics(endpoint: &str) -> bool {
+    METRICS_SKIP_ENDPOINTS.iter().any(|&skip| endpoint == skip)
+}
+
 /// Helper to extract model from request body
 fn extract_model_from_request(req: &Request<Body>) -> String {
     // Try to get model from query params first
@@ -25,6 +32,11 @@ fn extract_model_from_request(req: &Request<Body>) -> String {
 pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
     let endpoint = req.uri().path().to_string();
+
+    // Skip metrics for non-API endpoints
+    if should_skip_metrics(&endpoint) {
+        return next.run(req).await;
+    }
 
     // Extract model from request at the start (may be updated later from response)
     let initial_model = extract_model_from_request(&req);
@@ -53,13 +65,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     ACTIVE_REQUESTS
         .with_label_values(&[&endpoint, &initial_model, pending_backend])
         .dec();
-
-    // Decrement the actual backend counter (was incremented in handler after routing)
-    if model_str != "-" && backend_str != "unknown" {
-        ACTIVE_REQUESTS
-            .with_label_values(&["-", model_str, backend_str])
-            .dec();
-    }
 
     REQUESTS_TOTAL
         .with_label_values(&[&endpoint, &status_str, model_str, backend_str])

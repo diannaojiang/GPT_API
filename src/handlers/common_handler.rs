@@ -156,13 +156,6 @@ pub async fn handle_request_logic(
         )
         .await;
 
-    // Increment active requests for actual backend (after routing is determined)
-    if let Some(meta) = response.extensions().get::<AccessLogMeta>() {
-        crate::metrics::prometheus::ACTIVE_REQUESTS
-            .with_label_values(&["-", &meta.model, &meta.backend])
-            .inc();
-    }
-
     let _model = initial_model.as_str();
     let status = response.status().as_u16();
 
