@@ -48,6 +48,21 @@ fn main() {
         let app_state = Arc::new(AppState::new(config_manager, client_manager, db_pool));
         println!("Application state constructed.");
 
+        // ============================================================================
+        // 启动独立 Metrics Worker 线程
+        // ============================================================================
+        use gpt_api::metrics::{middleware as metrics_middleware, worker};
+
+        let (metrics_sender, metrics_receiver) = worker::create_metrics_channel();
+        metrics_middleware::set_metrics_sender(metrics_sender.clone());
+        println!("Metrics channel created.");
+
+        // 启动独立的 metrics worker 任务
+        tokio::spawn(async move {
+            worker::start_metrics_worker(metrics_receiver).await;
+        });
+        println!("Metrics worker started.");
+
         // Add a small delay to ensure the database is fully initialized on disk
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 

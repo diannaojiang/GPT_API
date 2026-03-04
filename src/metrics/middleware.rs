@@ -1,12 +1,47 @@
+// Copyright 2024 GPT_API Team
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Metrics middleware - 异步发送指标到独立 worker 线程
+//!
+//! 架构：
+//! 请求处理线程 ──(channel)──> 独立监控线程
+//!      │                              │
+//!      │                              ▼
+//!      │                       滑动窗口计算
+//!      │                       Prometheus 指标更新
+//!      ▼                       
+//!   路由转发
+
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use std::time::Instant;
 
-use crate::metrics::prometheus::{
-    ACTIVE_REQUESTS, ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX,
-    LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
-    SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M,
-};
-use crate::metrics::sliding_window;
+use crate::metrics::worker::{MetricEvent, MetricsSender};
+
+// 全局指标发送端 - 由 main.rs 在启动时设置
+static METRICS_SENDER: once_cell::sync::OnceCell<MetricsSender> = once_cell::sync::OnceCell::new();
+
+/// 设置全局指标发送端（必须在服务启动前调用）
+pub fn set_metrics_sender(sender: MetricsSender) {
+    METRICS_SENDER
+        .set(sender)
+        .expect("Metrics sender already set");
+}
+
+/// 获取全局指标发送端（用于健康检查等）
+pub fn get_metrics_sender() -> Option<&'static MetricsSender> {
+    METRICS_SENDER.get()
+}
 
 /// Endpoints that should be excluded from metrics
 const METRICS_SKIP_ENDPOINTS: &[&str] = &["/metrics", "/health", "/v1/models"];
@@ -29,6 +64,10 @@ fn extract_model_from_request(req: &Request<Body>) -> String {
     "unknown".to_string()
 }
 
+/// Metrics middleware - 将指标发送到独立 worker 线程处理
+///
+/// 关键优化：不再在请求路径中直接更新 Prometheus 指标和滑动窗口
+/// 而是只提取数据并通过 channel 异步发送，让 worker 线程处理耗时的指标更新
 pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let start = Instant::now();
     let endpoint = req.uri().path().to_string();
@@ -42,9 +81,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let initial_model = extract_model_from_request(&req);
     let pending_backend = "pending";
 
-    // Skip: don't count pending requests - only count when we know the actual backend
-    // ACTIVE_REQUESTS.with_label_values(&[&endpoint, &initial_model, pending_backend]).inc();
-
     let response = next.run(req).await;
 
     let elapsed = start.elapsed().as_secs_f64();
@@ -55,76 +91,24 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     // Get actual model/backend from response extensions
     let access_log_meta = response.extensions().get::<crate::models::AccessLogMeta>();
     let (model_str, backend_str) = access_log_meta
-        .map(|meta| {
-            // Debug log
-            tracing::info!(
-                "AccessLogMeta found: model={}, backend={}",
-                meta.model,
-                meta.backend
-            );
-            (meta.model.as_str(), meta.backend.as_str())
-        })
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                "AccessLogMeta NOT found! endpoint={}, initial_model={}",
-                endpoint,
-                initial_model
-            );
-            (&initial_model, pending_backend)
-        });
+        .map(|meta| (meta.model.as_str(), meta.backend.as_str()))
+        .unwrap_or_else(|| (&initial_model.as_str(), pending_backend));
 
-    // If we have AccessLogMeta, switch from pending to actual backend
-    // This tracks requests during the time between routing decision and response completion
-    let has_access_log = access_log_meta.is_some();
-    let is_valid_backend = backend_str != "unknown";
+    // 构建指标事件并发送到 worker（异步，不阻塞请求）
+    if let Some(sender) = METRICS_SENDER.get() {
+        let event = MetricEvent {
+            endpoint: endpoint.clone(),
+            status: status_str,
+            model: model_str.to_string(),
+            backend: backend_str.to_string(),
+            latency: elapsed,
+            is_success,
+        };
 
-    REQUESTS_TOTAL
-        .with_label_values(&[&endpoint, &status_str, model_str, backend_str])
-        .inc();
-
-    LATENCY
-        .with_label_values(&[model_str, backend_str])
-        .observe(elapsed);
-
-    sliding_window::update_latency_windows(elapsed);
-    sliding_window::update_success_overall(is_success);
-
-    // Update success windows for per-backend success rate
-    sliding_window::update_success_windows(is_success);
-    LATENCY_1M_MAX
-        .with_label_values(&[model_str, backend_str])
-        .set(sliding_window::get_latency_1m_max());
-    LATENCY_10M_MAX
-        .with_label_values(&[model_str, backend_str])
-        .set(sliding_window::get_latency_10m_max());
-    LATENCY_1H_MAX
-        .with_label_values(&[model_str, backend_str])
-        .set(sliding_window::get_latency_1h_max());
-
-    ACTIVE_REQUESTS_1M_MAX
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_active_1m_max() as i64);
-    ACTIVE_REQUESTS_10M_MAX
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_active_10m_max() as i64);
-    ACTIVE_REQUESTS_1H_MAX
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_active_1h_max() as i64);
-
-    SUCCESS_RATE_1M
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_success_1m());
-    SUCCESS_RATE_10M
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_success_10m());
-    SUCCESS_RATE_1H
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(sliding_window::get_success_1h());
-
-    SUCCESS_RATE
-        .with_label_values(&[&endpoint, model_str, backend_str])
-        .set(if is_success { 1.0 } else { 0.0 });
-    RPS.with_label_values(&[&endpoint]).set(1.0 / elapsed);
+        // 使用 try_send 是非阻塞的，即使 channel 满了也不会影响请求处理
+        // 丢失一些指标总比影响请求延迟好
+        let _ = sender.try_send(event);
+    }
 
     response
 }
