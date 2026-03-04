@@ -76,8 +76,10 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     // If we have AccessLogMeta, switch from pending to actual backend
     // This tracks requests during the time between routing decision and response completion
     let has_access_log = access_log_meta.is_some();
-    if has_access_log {
-        // Increment actual backend counter
+    let is_valid_backend = backend_str != "unknown";
+
+    // Only increment for valid backends
+    if has_access_log && is_valid_backend {
         ACTIVE_REQUESTS
             .with_label_values(&[&endpoint, model_str, backend_str])
             .inc();
