@@ -77,11 +77,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     // This tracks requests during the time between routing decision and response completion
     let has_access_log = access_log_meta.is_some();
     if has_access_log {
-        // Decrement pending counter
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, &initial_model, pending_backend])
-            .dec();
-
         // Increment actual backend counter
         ACTIVE_REQUESTS
             .with_label_values(&[&endpoint, model_str, backend_str])
