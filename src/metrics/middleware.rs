@@ -42,10 +42,8 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let initial_model = extract_model_from_request(&req);
     let pending_backend = "pending";
 
-    // Increment active requests with initial model/backend
-    ACTIVE_REQUESTS
-        .with_label_values(&[&endpoint, &initial_model, pending_backend])
-        .inc();
+    // Skip: don't count pending requests - only count when we know the actual backend
+    // ACTIVE_REQUESTS.with_label_values(&[&endpoint, &initial_model, pending_backend]).inc();
 
     let response = next.run(req).await;
 
