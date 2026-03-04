@@ -86,7 +86,7 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let elapsed = start.elapsed().as_secs_f64();
     let status = response.status().as_u16();
     let status_str = status.to_string();
-    let is_success = status >= 200 && status < 400;
+    let is_success = status == 200;
 
     // Get actual model/backend from response extensions
     let access_log_meta = response.extensions().get::<crate::models::AccessLogMeta>();

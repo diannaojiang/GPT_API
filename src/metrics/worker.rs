@@ -140,7 +140,7 @@ fn process_metric_event(event: MetricEvent) {
 
     SUCCESS_RATE
         .with_label_values(&[&endpoint, &model, &backend])
-        .set(if is_success { 1.0 } else { 0.0 });
+        .set(sliding_window::get_success_overall());
 
     // 更新 RPS
     if latency > 0.0 {
