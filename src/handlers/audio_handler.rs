@@ -112,6 +112,7 @@ async fn handle_audio_request(
 
                 let client_config = client_config.clone();
                 let endpoint_path = endpoint_path_owned.clone();
+                let current_model = _current_model.to_string();
 
                 async move {
                     // 3. 为每个客户端重新构建 Form
@@ -149,7 +150,7 @@ async fn handle_audio_request(
                         form,
                         false,
                         &api_endpoint,
-                        _current_model,
+                        current_model.as_str(),
                     )
                     .await
                     {
