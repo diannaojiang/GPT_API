@@ -137,11 +137,21 @@ async fn handle_audio_request(
                         client_config.base_url.trim_end_matches('/'),
                         endpoint_path
                     );
+                    let api_endpoint = format!("/v1/{}", endpoint_path);
                     let api_key = get_api_key(&client_config, &headers);
 
                     // 4. 发送请求（音频请求不支持流式）
-                    match build_and_send_request_multipart(&app_state, &api_key, &url, form, false)
-                        .await
+                    match build_and_send_request_multipart(
+                        &app_state,
+                        &client_config,
+                        &api_key,
+                        &url,
+                        form,
+                        false,
+                        &api_endpoint,
+                        _current_model,
+                    )
+                    .await
                     {
                         Ok(resp) => {
                             let status = resp.status();

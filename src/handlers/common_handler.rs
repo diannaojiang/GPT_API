@@ -219,12 +219,12 @@ async fn dispatch_request(
         client_config.base_url.trim_end_matches('/'),
         endpoint_path
     );
+    let api_endpoint = format!("/v1/{}", endpoint_path);
     let api_key = get_api_key(client_config, headers);
 
     let request_body = build_request_body_generic(payload, client_config, payload.is_streaming());
     let is_streaming = payload.is_streaming();
 
-    // 这里 build_and_send_request 现在返回 Ok(response) 即使状态码是 4xx/5xx
     let response = build_and_send_request(
         app_state,
         client_config,
@@ -232,6 +232,7 @@ async fn dispatch_request(
         &url,
         &request_body,
         is_streaming,
+        &api_endpoint,
     )
     .await
     .map_err(|e| match e.downcast::<reqwest::Error>() {

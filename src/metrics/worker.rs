@@ -27,8 +27,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::metrics::prometheus::{
-    ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX, LATENCY,
-    LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
+    ACTIVE_REQUESTS, ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX,
+    LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
     SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M,
 };
 use crate::metrics::sliding_window;
@@ -111,7 +111,12 @@ fn process_metric_event(event: MetricEvent) {
         .with_label_values(&[&model, &backend])
         .set(sliding_window::get_latency_1h_max());
 
-    // 更新活跃请求历史最大
+    // 采样当前活跃请求数并推入滑动窗口
+    let current_active = ACTIVE_REQUESTS
+        .with_label_values(&[&endpoint, &model, &backend])
+        .get();
+    sliding_window::update_active_windows(current_active as f64);
+
     ACTIVE_REQUESTS_1M_MAX
         .with_label_values(&[&endpoint, &model, &backend])
         .set(sliding_window::get_active_1m_max() as i64);

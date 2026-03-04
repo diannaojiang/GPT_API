@@ -3,7 +3,7 @@ use crate::client::client_manager::ClientManager;
 use crate::client::routing::select_clients;
 use crate::config::config_manager::ConfigManager;
 use crate::config::types::ClientConfig;
-use crate::metrics::prometheus::{ACTIVE_REQUESTS, FAILOVER_TOTAL};
+use crate::metrics::prometheus::FAILOVER_TOTAL;
 use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
 use std::future::Future;
