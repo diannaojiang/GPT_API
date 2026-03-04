@@ -1,4 +1,5 @@
 use crate::config::types::ClientConfig;
+use crate::metrics::prometheus::ACTIVE_REQUESTS;
 use crate::state::app_state::AppState;
 use reqwest::multipart::Form;
 use reqwest::{Client, Response};
@@ -57,6 +58,17 @@ pub async fn build_and_send_request(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
+    // Track active request: inc at start of backend call
+    let model = request_body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let backend = _client_config.name.as_str();
+    let endpoint = "/v1/chat/completions";
+    ACTIVE_REQUESTS
+        .with_label_values(&[endpoint, model, backend])
+        .inc();
+
     // 根据请求类型应用不同的超时策略
     let response = if is_streaming {
         // 流式请求：设置 60秒 的首字节/响应头超时 (TTFB)
@@ -77,6 +89,11 @@ pub async fn build_and_send_request(
             .send()
             .await?
     };
+
+    // Decrement counter after completion (success or error)
+    ACTIVE_REQUESTS
+        .with_label_values(&[endpoint, model, backend])
+        .dec();
 
     Ok(response)
 }

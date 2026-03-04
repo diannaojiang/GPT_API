@@ -78,22 +78,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let has_access_log = access_log_meta.is_some();
     let is_valid_backend = backend_str != "unknown";
 
-    // Only increment for valid backends
-    if has_access_log && is_valid_backend {
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, model_str, backend_str])
-            .inc();
-    }
-
-    // Decrement actual backend counter to complete the tracking
-    // Decrement actual backend counter (only for valid backends to match increment)
-    if has_access_log && is_valid_backend {
-        // Now decrement
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, model_str, backend_str])
-            .dec();
-    }
-
     REQUESTS_TOTAL
         .with_label_values(&[&endpoint, &status_str, model_str, backend_str])
         .inc();
