@@ -83,7 +83,7 @@ docker run -d \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b303
+  ghcr.io/diannaojiang/openai-api:b305
 ```
 
 ---
