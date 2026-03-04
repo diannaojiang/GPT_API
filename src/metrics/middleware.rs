@@ -57,8 +57,15 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     // Get actual model/backend from response extensions
     let access_log_meta = response.extensions().get::<crate::models::AccessLogMeta>();
     let (model_str, backend_str) = access_log_meta
-        .map(|meta| (meta.model.as_str(), meta.backend.as_str()))
-        .unwrap_or((&initial_model, pending_backend));
+        .map(|meta| {
+            // Debug log
+            tracing::info!("AccessLogMeta found: model={}, backend={}", meta.model, meta.backend);
+            (meta.model.as_str(), meta.backend.as_str())
+        })
+        .unwrap_or_else(|| {
+            tracing::warn!("AccessLogMeta NOT found! endpoint={}, initial_model={}", endpoint, initial_model);
+            (&initial_model, pending_backend)
+        });
 
     // If we have AccessLogMeta, switch from pending to actual backend
     // This tracks requests during the time between routing decision and response completion
