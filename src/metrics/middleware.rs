@@ -59,11 +59,19 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
     let (model_str, backend_str) = access_log_meta
         .map(|meta| {
             // Debug log
-            tracing::info!("AccessLogMeta found: model={}, backend={}", meta.model, meta.backend);
+            tracing::info!(
+                "AccessLogMeta found: model={}, backend={}",
+                meta.model,
+                meta.backend
+            );
             (meta.model.as_str(), meta.backend.as_str())
         })
         .unwrap_or_else(|| {
-            tracing::warn!("AccessLogMeta NOT found! endpoint={}, initial_model={}", endpoint, initial_model);
+            tracing::warn!(
+                "AccessLogMeta NOT found! endpoint={}, initial_model={}",
+                endpoint,
+                initial_model
+            );
             (&initial_model, pending_backend)
         });
 
