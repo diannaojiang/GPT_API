@@ -88,13 +88,6 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
             .inc();
     }
 
-    // Decrement the pending counter (only if not already done in the switch above)
-    if !has_access_log {
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, &initial_model, pending_backend])
-            .dec();
-    }
-
     // Decrement actual backend counter to complete the tracking
     if has_access_log {
         // Get count BEFORE decrement to capture peak
