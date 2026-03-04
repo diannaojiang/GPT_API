@@ -99,16 +99,20 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
 
     // Decrement actual backend counter to complete the tracking
     if has_access_log {
-        ACTIVE_REQUESTS
-            .with_label_values(&[&endpoint, model_str, backend_str])
-            .dec();
-
-        // Record active requests for sliding window max tracking
-        // Get the count AFTER increment (before decrement) to capture peak
+        // Get count BEFORE decrement to capture peak
         let count_before_dec = ACTIVE_REQUESTS
             .with_label_values(&[&endpoint, model_str, backend_str])
             .get();
-        sliding_window::update_active_windows(count_before_dec as f64);
+
+        // Update sliding window max tracking
+        if count_before_dec > 0 {
+            sliding_window::update_active_windows(count_before_dec as f64);
+        }
+
+        // Now decrement
+        ACTIVE_REQUESTS
+            .with_label_values(&[&endpoint, model_str, backend_str])
+            .dec();
     }
 
     REQUESTS_TOTAL
