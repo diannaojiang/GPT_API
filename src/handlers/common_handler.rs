@@ -228,6 +228,7 @@ async fn dispatch_request(
     let request_body = build_request_body_generic(payload, client_config, payload.is_streaming());
     let is_streaming = payload.is_streaming();
 
+    let request_start = Instant::now();
     let response = build_and_send_request(
         app_state,
         client_config,
@@ -251,6 +252,7 @@ async fn dispatch_request(
         }
         Err(original_err) => AppError::InternalServerError(original_err.to_string()),
     })?;
+    let request_elapsed = request_start.elapsed().as_secs_f64();
 
     // 核心修改：检查是否应该进入流式处理
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
@@ -276,6 +278,7 @@ async fn dispatch_request(
             client_config,
             &request_body,
             response,
+            request_elapsed,
         )
         .await
     }
@@ -290,8 +293,8 @@ async fn process_non_streaming_response(
     client_config: &ClientConfig,
     request_body: &Value,
     response: reqwest::Response,
+    request_elapsed: f64,
 ) -> Result<Response, AppError> {
-    let start_time = Instant::now();
     let model = payload.get_model().to_string();
     let backend = client_config.name.clone();
     let status = response.status();
@@ -350,10 +353,10 @@ async fn process_non_streaming_response(
                 usage.get("completion_tokens").and_then(|v| v.as_u64()),
                 usage.get("prompt_tokens").and_then(|v| v.as_u64()),
             ) {
-                let elapsed = start_time.elapsed().as_secs_f64();
                 let endpoint = "/v1/chat/completions".to_string();
                 let model_clone = model.clone();
                 let backend_clone = backend.clone();
+                let elapsed = request_elapsed;
 
                 if let Some(sender) = get_metrics_sender() {
                     let event = MetricEvent {
