@@ -1,5 +1,7 @@
 use crate::app_error::AppError;
+use crate::metrics::middleware::get_metrics_sender;
 use crate::metrics::prometheus::ERRORS_TOTAL;
+use crate::metrics::worker::MetricEvent;
 use crate::models::AccessLogMeta;
 use axum::{
     extract::State,
@@ -10,6 +12,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::{
     client::proxy::{build_and_send_request, get_api_key},
@@ -288,6 +291,9 @@ async fn process_non_streaming_response(
     request_body: &Value,
     response: reqwest::Response,
 ) -> Result<Response, AppError> {
+    let start_time = Instant::now();
+    let model = payload.get_model().to_string();
+    let backend = client_config.name.clone();
     let status = response.status();
 
     // Get AccessLogMeta from response BEFORE consuming it with bytes()
@@ -338,6 +344,33 @@ async fn process_non_streaming_response(
             )
             .await;
         });
+
+        if let Some(usage) = response_body.get("usage") {
+            if let (Some(completion), Some(prompt)) = (
+                usage.get("completion_tokens").and_then(|v| v.as_u64()),
+                usage.get("prompt_tokens").and_then(|v| v.as_u64()),
+            ) {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let endpoint = "/v1/chat/completions".to_string();
+                let model_clone = model.clone();
+                let backend_clone = backend.clone();
+
+                if let Some(sender) = get_metrics_sender() {
+                    let event = MetricEvent {
+                        endpoint,
+                        status: status.as_u16().to_string(),
+                        model: model_clone,
+                        backend: backend_clone,
+                        latency: elapsed,
+                        is_success: true,
+                        completion_tokens: Some(completion),
+                        prompt_tokens: Some(prompt),
+                        elapsed: Some(elapsed),
+                    };
+                    let _ = sender.try_send(event);
+                }
+            }
+        }
     }
 
     // Create new response from JSON body

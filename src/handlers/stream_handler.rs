@@ -156,30 +156,30 @@ async fn stream_logger_task(
                     if is_chat && choice.get("delta").is_some() {
                         let ttft = start_time.elapsed().as_secs_f64();
                         TTFT.with_label_values(&[&model, &backend]).observe(ttft);
-                        sliding_window::update_ttft_windows(ttft);
+                        sliding_window::update_ttft_windows(ttft, &model, &backend);
                         TTFT_1M_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_1m_max());
+                            .set(sliding_window::get_ttft_1m_max(&model, &backend));
                         TTFT_10M_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_10m_max());
+                            .set(sliding_window::get_ttft_10m_max(&model, &backend));
                         TTFT_1H_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_1h_max());
+                            .set(sliding_window::get_ttft_1h_max(&model, &backend));
                         _ttft_recorded = true;
                     } else if !is_chat && choice.get("text").is_some() {
                         let ttft = start_time.elapsed().as_secs_f64();
                         TTFT.with_label_values(&[&model, &backend]).observe(ttft);
-                        sliding_window::update_ttft_windows(ttft);
+                        sliding_window::update_ttft_windows(ttft, &model, &backend);
                         TTFT_1M_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_1m_max());
+                            .set(sliding_window::get_ttft_1m_max(&model, &backend));
                         TTFT_10M_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_10m_max());
+                            .set(sliding_window::get_ttft_10m_max(&model, &backend));
                         TTFT_1H_MAX
                             .with_label_values(&[&model, &backend])
-                            .set(sliding_window::get_ttft_1h_max());
+                            .set(sliding_window::get_ttft_1h_max(&model, &backend));
                         _ttft_recorded = true;
                     }
                 }
@@ -199,16 +199,16 @@ async fn stream_logger_task(
                 if completion > 0 && elapsed > 0.0 {
                     let tps = completion as f64 / elapsed;
                     TPS.with_label_values(&[&model, &backend]).observe(tps);
-                    sliding_window::update_tps_windows(tps);
+                    sliding_window::update_tps_windows(tps, &model, &backend);
                     TPS_1M_AVG
                         .with_label_values(&[&model, &backend])
-                        .set(sliding_window::get_tps_1m_avg());
+                        .set(sliding_window::get_tps_1m_avg(&model, &backend));
                     TPS_10M_AVG
                         .with_label_values(&[&model, &backend])
-                        .set(sliding_window::get_tps_10m_avg());
+                        .set(sliding_window::get_tps_10m_avg(&model, &backend));
                     TPS_1H_AVG
                         .with_label_values(&[&model, &backend])
-                        .set(sliding_window::get_tps_1h_avg());
+                        .set(sliding_window::get_tps_1h_avg(&model, &backend));
                 }
                 TOKENS_TOTAL
                     .with_label_values(&[&model, "completion"])

@@ -103,6 +103,9 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
             backend: backend_str.to_string(),
             latency: elapsed,
             is_success,
+            completion_tokens: None,
+            prompt_tokens: None,
+            elapsed: None,
         };
 
         // 使用 try_send 是非阻塞的，即使 channel 满了也不会影响请求处理
