@@ -2,11 +2,13 @@ use crate::app_error::AppError;
 use crate::config::types::ClientConfig;
 use crate::db::records::log_non_streaming_request;
 use crate::handlers::utils::truncate_json;
+use crate::metrics::middleware::get_metrics_sender;
 use crate::metrics::prometheus::{
     TOKENS_TOTAL, TPS, TPS_10M_AVG, TPS_1H_AVG, TPS_1M_AVG, TTFT, TTFT_10M_MAX, TTFT_1H_MAX,
     TTFT_1M_MAX,
 };
 use crate::metrics::sliding_window;
+use crate::metrics::worker::MetricEvent;
 use crate::models::requests::RequestPayload;
 use crate::models::AccessLogMeta;
 use crate::state::app_state::AppState;
@@ -129,6 +131,8 @@ async fn stream_logger_task(
     model: String,
     backend: String,
     start_time: Instant,
+    endpoint: String,
+    status: String,
 ) {
     let mut accumulator = StreamAccumulator::new();
     let mut last_chunk: Option<Value> = None;
@@ -267,8 +271,8 @@ async fn stream_logger_task(
         }
 
         // Inject captured Usage and Finish Reason
-        if let Some(u) = captured_usage {
-            final_chunk["usage"] = u;
+        if let Some(ref u) = captured_usage {
+            final_chunk["usage"] = u.clone();
         }
         if let Some(fr) = captured_finish_reason {
             if let Some(choice) = final_chunk["choices"][0].as_object_mut() {
@@ -285,6 +289,35 @@ async fn stream_logger_task(
             client_ip,
         )
         .await;
+    }
+
+    // 发送完整流式延迟指标
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+
+    // 提取 usage 信息
+    let (completion_tokens, prompt_tokens) = captured_usage
+        .as_ref()
+        .map(|u| {
+            let comp = u.get("completion_tokens").and_then(|v| v.as_u64());
+            let prompt = u.get("prompt_tokens").and_then(|v| v.as_u64());
+            (comp, prompt)
+        })
+        .unwrap_or((None, None));
+
+    // 发送指标事件到 worker
+    if let Some(sender) = get_metrics_sender() {
+        let event = MetricEvent {
+            endpoint,
+            status,
+            model: model.clone(),
+            backend: backend.clone(),
+            latency: total_elapsed,
+            is_success: true,
+            completion_tokens,
+            prompt_tokens,
+            elapsed: Some(total_elapsed),
+        };
+        let _ = sender.try_send(event);
     }
 }
 
@@ -368,6 +401,8 @@ pub async fn process_streaming_response(
             model_name,
             backend,
             stream_start_time,
+            "/v1/chat/completions".to_string(),
+            "200".to_string(),
         )
         .await;
     });
