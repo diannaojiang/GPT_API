@@ -29,8 +29,8 @@ use tokio::sync::mpsc;
 use crate::metrics::prometheus::{
     ACTIVE_REQUESTS, ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX,
     LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
-    SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M, TOKENS_TOTAL, TPS, TPS_10M_AVG, TPS_1H_AVG,
-    TPS_1M_AVG,
+    SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M, TOKENS_TOTAL, TOKEN_DISTRIBUTION, TPS,
+    TPS_10M_AVG, TPS_1H_AVG, TPS_1M_AVG,
 };
 use crate::metrics::sliding_window;
 
@@ -183,6 +183,14 @@ fn process_metric_event(event: MetricEvent) {
         TOKENS_TOTAL
             .with_label_values(&[&model, "prompt"])
             .inc_by(prompt as f64);
+
+        // Token distribution histogram for analysis
+        TOKEN_DISTRIBUTION
+            .with_label_values(&[&model, &backend, "prompt"])
+            .observe(prompt as f64);
+        TOKEN_DISTRIBUTION
+            .with_label_values(&[&model, &backend, "completion"])
+            .observe(completion as f64);
     }
 }
 

@@ -210,6 +210,17 @@ pub static TOKENS_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::La
     .unwrap()
 });
 
+pub static TOKEN_DISTRIBUTION: once_cell::sync::Lazy<HistogramVec> =
+    once_cell::sync::Lazy::new(|| {
+        register_histogram_vec!(
+            "gpt_api_token_distribution",
+            "Token count distribution per request",
+            &["model", "backend", "type"],
+            exponential_buckets(100.0, 2.0, 15).unwrap()
+        )
+        .unwrap()
+    });
+
 pub static FAILOVER_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::Lazy::new(|| {
     register_counter_vec!(
         "gpt_api_failover_total",
