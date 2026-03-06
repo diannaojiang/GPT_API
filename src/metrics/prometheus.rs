@@ -161,12 +161,11 @@ pub static LATENCY_1H_MAX: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::La
     .unwrap()
 });
 
-pub static TPS: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy::new(|| {
-    register_histogram_vec!(
+pub static TPS: once_cell::sync::Lazy<GaugeVec> = once_cell::sync::Lazy::new(|| {
+    register_gauge_vec!(
         "gpt_api_tps",
-        "Tokens per second",
-        &["model", "backend"],
-        exponential_buckets(1.0, 2.0, 15).unwrap()
+        "Real-time TPS (tokens per second)",
+        &["model", "backend"]
     )
     .unwrap()
 });

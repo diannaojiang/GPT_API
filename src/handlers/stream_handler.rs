@@ -202,7 +202,7 @@ async fn stream_logger_task(
                 let elapsed = start_time.elapsed().as_secs_f64();
                 if completion > 0 && elapsed > 0.0 {
                     let tps = completion as f64 / elapsed;
-                    TPS.with_label_values(&[&model, &backend]).observe(tps);
+                    TPS.with_label_values(&[&model, &backend]).set(tps);
                     sliding_window::update_tps_windows(tps, &model, &backend);
                     TPS_1M_AVG
                         .with_label_values(&[&model, &backend])

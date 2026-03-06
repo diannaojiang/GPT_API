@@ -163,7 +163,7 @@ fn process_metric_event(event: MetricEvent) {
     {
         if completion > 0 && elapsed_secs > 0.0 {
             let tps = completion as f64 / elapsed_secs;
-            TPS.with_label_values(&[&model, &backend]).observe(tps);
+            TPS.with_label_values(&[&model, &backend]).set(tps);
             sliding_window::update_tps_windows(tps, &model, &backend);
 
             TPS_1M_AVG
