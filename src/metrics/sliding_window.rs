@@ -2,39 +2,70 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 struct SlidingWindow {
-    max_size: usize,
-    data: Mutex<VecDeque<f64>>,
+    window_duration: Duration,
+    data: Mutex<VecDeque<(f64, Instant)>>,
 }
 
 impl SlidingWindow {
-    fn new(max_size: usize) -> Self {
+    fn new(window_duration: Duration) -> Self {
         Self {
-            max_size,
-            data: Mutex::new(VecDeque::with_capacity(max_size)),
+            window_duration,
+            data: Mutex::new(VecDeque::new()),
         }
     }
 
     fn push(&self, value: f64) {
         let mut data = self.data.lock().unwrap();
-        if data.len() >= self.max_size {
-            data.pop_front();
+        let now = Instant::now();
+
+        // 移除过期数据（按时间窗口）
+        while let Some((_, timestamp)) = data.front() {
+            if now.duration_since(*timestamp) >= self.window_duration {
+                data.pop_front();
+            } else {
+                break;
+            }
         }
-        data.push_back(value);
+
+        data.push_back((value, now));
     }
 
     fn max(&self) -> f64 {
-        let data = self.data.lock().unwrap();
-        data.iter().cloned().fold(f64::NAN, f64::max)
+        let mut data = self.data.lock().unwrap();
+        let now = Instant::now();
+
+        // 先清理过期数据
+        while let Some((_, timestamp)) = data.front() {
+            if now.duration_since(*timestamp) >= self.window_duration {
+                data.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        data.iter().map(|(v, _)| *v).fold(f64::NAN, f64::max)
     }
 
     fn avg(&self) -> f64 {
-        let data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap();
+        let now = Instant::now();
+
+        // 先清理过期数据
+        while let Some((_, timestamp)) = data.front() {
+            if now.duration_since(*timestamp) >= self.window_duration {
+                data.pop_front();
+            } else {
+                break;
+            }
+        }
+
         if data.is_empty() {
             return 0.0;
         }
-        data.iter().sum::<f64>() / data.len() as f64
+        data.iter().map(|(v, _)| *v).sum::<f64>() / data.len() as f64
     }
 }
 
@@ -60,16 +91,17 @@ static SUCCESS_WINDOWS_1M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static SUCCESS_WINDOWS_10M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static SUCCESS_WINDOWS_1H: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 
-static SUCCESS_WINDOW_OVERALL: Lazy<SlidingWindow> = Lazy::new(|| SlidingWindow::new(3600));
+static SUCCESS_WINDOW_OVERALL: Lazy<SlidingWindow> =
+    Lazy::new(|| SlidingWindow::new(Duration::from_secs(3600)));
 
 fn make_key(model: &str, backend: &str) -> String {
     format!("{}:{}", model, backend)
 }
 
-fn get_or_create_window(map: &WindowMap, key: &str, max_size: usize) {
+fn get_or_create_window(map: &WindowMap, key: &str, window_duration: Duration) {
     if !map.contains_key(key) {
         map.entry(key.to_string())
-            .or_insert_with(|| SlidingWindow::new(max_size));
+            .or_insert_with(|| SlidingWindow::new(window_duration));
     }
 }
 
@@ -82,52 +114,52 @@ fn get_window_ref<'a>(
 
 pub fn update_ttft_windows(value: f64, model: &str, backend: &str) {
     let key = make_key(model, backend);
-    get_or_create_window(&TTFT_WINDOWS_1M, &key, 60);
+    get_or_create_window(&TTFT_WINDOWS_1M, &key, Duration::from_secs(60));
     get_window_ref(&TTFT_WINDOWS_1M, &key).push(value);
-    get_or_create_window(&TTFT_WINDOWS_10M, &key, 600);
+    get_or_create_window(&TTFT_WINDOWS_10M, &key, Duration::from_secs(600));
     get_window_ref(&TTFT_WINDOWS_10M, &key).push(value);
-    get_or_create_window(&TTFT_WINDOWS_1H, &key, 3600);
+    get_or_create_window(&TTFT_WINDOWS_1H, &key, Duration::from_secs(3600));
     get_window_ref(&TTFT_WINDOWS_1H, &key).push(value);
 }
 
 pub fn update_latency_windows(value: f64, model: &str, backend: &str) {
     let key = make_key(model, backend);
-    get_or_create_window(&LATENCY_WINDOWS_1M, &key, 60);
+    get_or_create_window(&LATENCY_WINDOWS_1M, &key, Duration::from_secs(60));
     get_window_ref(&LATENCY_WINDOWS_1M, &key).push(value);
-    get_or_create_window(&LATENCY_WINDOWS_10M, &key, 600);
+    get_or_create_window(&LATENCY_WINDOWS_10M, &key, Duration::from_secs(600));
     get_window_ref(&LATENCY_WINDOWS_10M, &key).push(value);
-    get_or_create_window(&LATENCY_WINDOWS_1H, &key, 3600);
+    get_or_create_window(&LATENCY_WINDOWS_1H, &key, Duration::from_secs(3600));
     get_window_ref(&LATENCY_WINDOWS_1H, &key).push(value);
 }
 
 pub fn update_tps_windows(value: f64, model: &str, backend: &str) {
     let key = make_key(model, backend);
-    get_or_create_window(&TPS_WINDOWS_1M, &key, 60);
+    get_or_create_window(&TPS_WINDOWS_1M, &key, Duration::from_secs(60));
     get_window_ref(&TPS_WINDOWS_1M, &key).push(value);
-    get_or_create_window(&TPS_WINDOWS_10M, &key, 600);
+    get_or_create_window(&TPS_WINDOWS_10M, &key, Duration::from_secs(600));
     get_window_ref(&TPS_WINDOWS_10M, &key).push(value);
-    get_or_create_window(&TPS_WINDOWS_1H, &key, 3600);
+    get_or_create_window(&TPS_WINDOWS_1H, &key, Duration::from_secs(3600));
     get_window_ref(&TPS_WINDOWS_1H, &key).push(value);
 }
 
 pub fn update_active_windows(value: f64, model: &str, backend: &str) {
     let key = make_key(model, backend);
-    get_or_create_window(&ACTIVE_WINDOWS_1M, &key, 60);
+    get_or_create_window(&ACTIVE_WINDOWS_1M, &key, Duration::from_secs(60));
     get_window_ref(&ACTIVE_WINDOWS_1M, &key).push(value);
-    get_or_create_window(&ACTIVE_WINDOWS_10M, &key, 600);
+    get_or_create_window(&ACTIVE_WINDOWS_10M, &key, Duration::from_secs(600));
     get_window_ref(&ACTIVE_WINDOWS_10M, &key).push(value);
-    get_or_create_window(&ACTIVE_WINDOWS_1H, &key, 3600);
+    get_or_create_window(&ACTIVE_WINDOWS_1H, &key, Duration::from_secs(3600));
     get_window_ref(&ACTIVE_WINDOWS_1H, &key).push(value);
 }
 
 pub fn update_success_windows(success: bool, model: &str, backend: &str) {
     let key = make_key(model, backend);
     let value = if success { 1.0 } else { 0.0 };
-    get_or_create_window(&SUCCESS_WINDOWS_1M, &key, 60);
+    get_or_create_window(&SUCCESS_WINDOWS_1M, &key, Duration::from_secs(60));
     get_window_ref(&SUCCESS_WINDOWS_1M, &key).push(value);
-    get_or_create_window(&SUCCESS_WINDOWS_10M, &key, 600);
+    get_or_create_window(&SUCCESS_WINDOWS_10M, &key, Duration::from_secs(600));
     get_window_ref(&SUCCESS_WINDOWS_10M, &key).push(value);
-    get_or_create_window(&SUCCESS_WINDOWS_1H, &key, 3600);
+    get_or_create_window(&SUCCESS_WINDOWS_1H, &key, Duration::from_secs(3600));
     get_window_ref(&SUCCESS_WINDOWS_1H, &key).push(value);
 }
 
