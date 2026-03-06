@@ -25,6 +25,11 @@ impl DispatcherService {
         }
     }
 
+    fn should_retry_on_client_error(resp: &Response) -> bool {
+        let status = resp.status();
+        status.as_u16() == 404 || status.as_u16() == 422
+    }
+
     /// 解析给定模型名称对应的客户端列表，并应用负载均衡
     async fn resolve_clients(
         &self,
@@ -170,7 +175,10 @@ impl DispatcherService {
         match primary_result {
             Ok(mut resp) => {
                 let status = resp.status();
-                if status.is_success() || status.is_client_error() {
+                let should_fallback =
+                    status.is_client_error() && Self::should_retry_on_client_error(&resp);
+
+                if status.is_success() || (status.is_client_error() && !should_fallback) {
                     if resp.extensions().get::<AccessLogMeta>().is_none() {
                         resp.extensions_mut().insert(AccessLogMeta {
                             model: model_name.to_string(),
@@ -186,7 +194,7 @@ impl DispatcherService {
                     return Ok(resp);
                 }
                 warn!(
-                    "Primary client {} failed with status {}. Triggering concurrent fallback...",
+                    "Primary client {} returned retryable error {}. Triggering fallback...",
                     primary_client.name, status
                 );
             }
