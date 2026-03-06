@@ -216,7 +216,7 @@ pub static TOKEN_DISTRIBUTION: once_cell::sync::Lazy<HistogramVec> =
             "gpt_api_token_distribution",
             "Token count distribution per request",
             &["model", "backend", "type"],
-            exponential_buckets(100.0, 2.0, 15).unwrap()
+            exponential_buckets(100.0, 1.365, 20).unwrap()
         )
         .unwrap()
     });
