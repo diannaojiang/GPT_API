@@ -92,7 +92,7 @@ pub static TTFT: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy::ne
         "gpt_api_ttft_seconds",
         "Time to First Token in seconds",
         &["model", "backend"],
-        exponential_buckets(0.01, 2.0, 15).unwrap()
+        exponential_buckets(0.01, 2.0, 20).unwrap()
     )
     .unwrap()
 });
@@ -129,7 +129,7 @@ pub static LATENCY: once_cell::sync::Lazy<HistogramVec> = once_cell::sync::Lazy:
         "gpt_api_latency_seconds",
         "End-to-end latency in seconds",
         &["model", "backend"],
-        exponential_buckets(0.01, 2.0, 15).unwrap()
+        exponential_buckets(0.01, 2.0, 20).unwrap()
     )
     .unwrap()
 });
