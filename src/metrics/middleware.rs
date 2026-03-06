@@ -50,6 +50,17 @@ fn should_skip_metrics(endpoint: &str) -> bool {
     METRICS_SKIP_ENDPOINTS.iter().any(|&skip| endpoint == skip)
 }
 
+/// Helper to detect if request is streaming
+fn is_streaming_request(req: &Request<Body>) -> bool {
+    // Check common streaming endpoints
+    if let Some(query) = req.uri().query() {
+        if query.contains("stream=true") || query.contains("stream=true") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Helper to extract model from request body
 fn extract_model_from_request(req: &Request<Body>) -> String {
     // Try to get model from query params first
@@ -74,6 +85,12 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
 
     // Skip metrics for non-API endpoints
     if should_skip_metrics(&endpoint) {
+        return next.run(req).await;
+    }
+
+    // Skip metrics for streaming requests - they are handled by stream_logger_task
+    // to capture complete streaming latency instead of just TTFB
+    if is_streaming_request(&req) {
         return next.run(req).await;
     }
 
