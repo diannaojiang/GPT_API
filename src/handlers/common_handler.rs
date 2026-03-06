@@ -258,7 +258,7 @@ async fn dispatch_request(
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
     if payload.is_streaming() {
         let client_ip = get_client_ip(headers, addr);
-        process_streaming_response(
+        let mut resp = process_streaming_response(
             app_state.clone(),
             headers.clone(),
             payload.clone(),
@@ -268,7 +268,9 @@ async fn dispatch_request(
             is_chat,
             &request_body,
         )
-        .await
+        .await?;
+        resp.extensions_mut().insert(());
+        Ok(resp)
     } else {
         process_non_streaming_response(
             app_state,
