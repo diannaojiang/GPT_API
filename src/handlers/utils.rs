@@ -216,6 +216,12 @@ pub fn build_request_body_generic(
                     body["stream_options"] = json!({"include_usage": true});
                 }
             }
+            if let Some(logprobs) = p.logprobs {
+                body["logprobs"] = json!(logprobs);
+            }
+            if let Some(top_logprobs) = p.top_logprobs {
+                body["top_logprobs"] = json!(top_logprobs);
+            }
             body
         }
         RequestPayload::Completion(p) => {
@@ -243,6 +249,12 @@ pub fn build_request_body_generic(
                 } else {
                     body["stream_options"] = json!({"include_usage": true});
                 }
+            }
+            if let Some(logprobs) = p.logprobs {
+                body["logprobs"] = json!(logprobs);
+            }
+            if let Some(prompt_logprobs) = p.prompt_logprobs {
+                body["prompt_logprobs"] = json!(prompt_logprobs);
             }
             body
         }
