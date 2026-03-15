@@ -141,6 +141,11 @@ pub struct ChatCompletionRequest {
     pub chat_template_kwargs: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<Value>,
+    // Logprobs parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<u8>,
     // Add other fields as needed
 }
 
@@ -158,7 +163,10 @@ pub struct CompletionRequest {
     pub stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<Value>,
-    // Add other fields as needed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_logprobs: Option<i32>,
 }
 
 // --- New vLLM Compatible Requests ---
