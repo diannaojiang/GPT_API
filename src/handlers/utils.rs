@@ -256,6 +256,9 @@ pub fn build_request_body_generic(
             if let Some(prompt_logprobs) = p.prompt_logprobs {
                 body["prompt_logprobs"] = json!(prompt_logprobs);
             }
+            if let Some(echo) = p.echo {
+                body["echo"] = json!(echo);
+            }
             body
         }
         RequestPayload::Embedding(p) => serde_json::to_value(p).unwrap_or(json!({})),

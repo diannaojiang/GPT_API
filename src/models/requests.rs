@@ -167,6 +167,8 @@ pub struct CompletionRequest {
     pub logprobs: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_logprobs: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub echo: Option<bool>,
 }
 
 // --- New vLLM Compatible Requests ---
