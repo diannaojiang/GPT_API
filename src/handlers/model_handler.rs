@@ -43,7 +43,7 @@ pub async fn list_models(State(app_state): State<Arc<AppState>>) -> Json<Value> 
     let config = app_state.config_manager.get_config().await;
 
     let http_client = Client::builder()
-        .timeout(Duration::from_secs(1))
+        .timeout(Duration::from_secs(5))
         .build()
         .expect("Failed to build HTTP client");
 
