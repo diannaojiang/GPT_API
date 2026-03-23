@@ -2,7 +2,7 @@ use axum::{extract::State, Json};
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::config::types::{ClientConfig, ModelMatch};
 use crate::state::app_state::AppState;
@@ -42,8 +42,10 @@ pub async fn list_models(State(app_state): State<Arc<AppState>>) -> Json<Value> 
     // 获取当前配置
     let config = app_state.config_manager.get_config().await;
 
-    // 获取HTTP客户端
-    let http_client = Client::new();
+    let http_client = Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .expect("Failed to build HTTP client");
 
     // 创建一个任务列表来并发获取所有客户端的模型
     let mut tasks = Vec::new();
