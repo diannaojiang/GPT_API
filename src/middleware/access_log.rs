@@ -7,6 +7,28 @@ use tracing::{error, info};
 use crate::handlers::utils::get_client_ip;
 use crate::models::AccessLogMeta;
 
+fn should_log_full_token_on_error() -> bool {
+    // Security default: do NOT log full credentials.
+    // Set LOG_FULL_TOKEN_ON_ERROR=true (or 1/yes/on) to opt-in for incident debugging.
+    std::env::var("LOG_FULL_TOKEN_ON_ERROR")
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn truncate_token_for_log(token: &str) -> String {
+    if token.len() > 10 {
+        format!("{}...", &token[..8])
+    } else {
+        token.to_string()
+    }
+}
+
 /// 访问日志中间件
 ///
 /// 记录详细的请求和响应信息，格式模仿 Nginx Combined Log Format。
@@ -33,19 +55,14 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-");
 
-    // 提取 API Key (简单脱敏，只取前几位，或者如果太短就全取)
-    let api_key = headers
+    // 提取 Bearer Token：
+    // - 正常情况下只记录缩略（避免泄露）
+    // - 仅在 error 日志中记录完整 token（便于排障定位具体 key）
+    let bearer_token_raw = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.strip_prefix("Bearer ").unwrap_or(s))
-        .map(|s| {
-            if s.len() > 10 {
-                format!("{}...", &s[..8])
-            } else {
-                s.to_string()
-            }
-        })
-        .unwrap_or_else(|| "-".to_string());
+        .map(|s| s.strip_prefix("Bearer ").unwrap_or(s).to_string())
+        .filter(|s| !s.is_empty());
 
     // 2. 执行后续处理
     let response = next.run(req).await;
@@ -77,6 +94,8 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
     // 格式: IP - - [Time] "Method URI Version" Status Bytes "Referer" "UserAgent" Latency "Model" "ApiKey" "Error" "RequestBody"
     let time_str = Local::now().format("%d/%b/%Y:%H:%M:%S %z");
 
+    // token 在错误时是否完整输出，需要等拿到 status 后才能决定
+    let api_key_display = "-".to_string();
     let mut log_line = format!(
         "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" {:?}",
         client_ip,
@@ -89,12 +108,41 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
         user_agent,
         latency.as_secs_f64(),
         model,
-        api_key,
+        api_key_display,
         error_msg
     );
 
     // 6. 根据状态码决定日志级别
     if status.is_server_error() || status.is_client_error() {
+        // 错误日志：默认仍然脱敏；仅在显式开启开关时输出完整 token
+        let api_key_for_error = bearer_token_raw
+            .as_deref()
+            .map(|t| {
+                if should_log_full_token_on_error() {
+                    t.to_string()
+                } else {
+                    truncate_token_for_log(t)
+                }
+            })
+            .unwrap_or_else(|| "-".to_string());
+        // 将 log_line 中的占位 token 替换为完整 token。
+        // 这里使用固定格式的后两段（model 与 api_key）来重建，避免做脆弱的字符串替换。
+        log_line = format!(
+            "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" {:?}",
+            client_ip,
+            time_str,
+            method,
+            uri,
+            version,
+            status.as_u16(),
+            body_bytes,
+            user_agent,
+            latency.as_secs_f64(),
+            model,
+            api_key_for_error,
+            error_msg
+        );
+
         // 仅在错误时记录请求体
         // 不再进行中间件层面的截断，完全信任上层逻辑 (handler) 传递的内容
         // 即使上层传递的是原始的长字符串(例如 json 解析失败)，也完整记录
@@ -105,6 +153,27 @@ pub async fn access_log_middleware(req: Request<Body>, next: Next) -> Response {
         }
         error!(target: "access_log", "{}", log_line);
     } else {
+        // 成功日志：输出缩略 token（若存在）
+        let api_key_for_info = bearer_token_raw
+            .as_deref()
+            .map(truncate_token_for_log)
+            .unwrap_or_else(|| "-".to_string());
+
+        log_line = format!(
+            "{} - - [{}] \"{} {} {:?}\" {} {} \"-\" \"{}\" {:.3}s \"{}\" \"{}\" {:?}",
+            client_ip,
+            time_str,
+            method,
+            uri,
+            version,
+            status.as_u16(),
+            body_bytes,
+            user_agent,
+            latency.as_secs_f64(),
+            model,
+            api_key_for_info,
+            error_msg
+        );
         // 成功请求不记录请求体
         info!(target: "access_log", "{}", log_line);
     }
