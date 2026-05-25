@@ -1,5 +1,5 @@
 use crate::config::types::ClientConfig;
-use crate::metrics::prometheus::ACTIVE_REQUESTS;
+// Active request gauge is tracked at response body lifetime.
 use crate::state::app_state::AppState;
 use reqwest::multipart::Form;
 use reqwest::{Client, Response};
@@ -8,22 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-/// RAII 守卫：在 drop 时自动递减 ACTIVE_REQUESTS 计数器。
-/// 确保无论函数通过正常返回还是通过 `?` 提前返回（超时、连接错误等），
-/// 活跃请求计数都会被正确递减。
-struct ActiveRequestGuard {
-    endpoint: String,
-    model: String,
-    backend: String,
-}
-
-impl Drop for ActiveRequestGuard {
-    fn drop(&mut self) {
-        ACTIVE_REQUESTS
-            .with_label_values(&[&self.endpoint, &self.model, &self.backend])
-            .dec();
-    }
-}
+// NOTE: Active in-flight requests are tracked at the HTTP response body layer
+// (see `metrics::active_requests`) to properly cover SSE streaming lifetimes.
 
 /// 从配置或请求头中获取 API Key
 ///
@@ -59,12 +45,12 @@ pub fn get_api_key(
 /// 对于非流式请求，仅受 ClientManager 的 1800秒 全局超时限制
 pub async fn build_and_send_request(
     app_state: &Arc<AppState>,
-    client_config: &ClientConfig,
+    _client_config: &ClientConfig,
     api_key: &Option<String>,
     url: &str,
     request_body: &Value,
     is_streaming: bool,
-    endpoint: &str,
+    _endpoint: &str,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     // 获取 HTTP 客户端 (复用)
     let client: Client = app_state.client_manager.get_client();
@@ -76,20 +62,8 @@ pub async fn build_and_send_request(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    let model = request_body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let backend = client_config.name.as_str();
-
-    ACTIVE_REQUESTS
-        .with_label_values(&[endpoint, model, backend])
-        .inc();
-    let _guard = ActiveRequestGuard {
-        endpoint: endpoint.to_string(),
-        model: model.to_string(),
-        backend: backend.to_string(),
-    };
+    // Active requests is tracked at the HTTP response body layer so that streaming
+    // stays "active" for the lifetime of the SSE connection.
 
     // 根据请求类型应用不同的超时策略
     let response = if is_streaming {
@@ -117,13 +91,13 @@ pub async fn build_and_send_request(
 
 pub async fn build_and_send_request_multipart(
     app_state: &Arc<AppState>,
-    client_config: &ClientConfig,
+    _client_config: &ClientConfig,
     api_key: &Option<String>,
     url: &str,
     form: Form,
     is_streaming: bool,
-    endpoint: &str,
-    model: &str,
+    _endpoint: &str,
+    _model: &str,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let http_client = app_state.client_manager.get_client();
 
@@ -133,16 +107,8 @@ pub async fn build_and_send_request_multipart(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    let backend = client_config.name.as_str();
-
-    ACTIVE_REQUESTS
-        .with_label_values(&[endpoint, model, backend])
-        .inc();
-    let _guard = ActiveRequestGuard {
-        endpoint: endpoint.to_string(),
-        model: model.to_string(),
-        backend: backend.to_string(),
-    };
+    // Active requests is tracked at the HTTP response body layer so that streaming
+    // stays "active" for the lifetime of the SSE connection.
 
     // 根据请求类型应用不同的超时策略
     let response = if is_streaming {

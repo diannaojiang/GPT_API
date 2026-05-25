@@ -29,6 +29,8 @@ mimalloc = "0.1.48"
 simd-json = "0.17.0"
 prometheus = "0.13"
 dashmap = "5.5"
+bytes = "1"
+http-body = "1"
 
 [profile.release]
 lto = true

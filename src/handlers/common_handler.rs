@@ -4,6 +4,7 @@ use crate::metrics::prometheus::ERRORS_TOTAL;
 use crate::metrics::worker::MetricEvent;
 use crate::models::AccessLogMeta;
 use axum::{
+    body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -23,6 +24,7 @@ use crate::{
         apply_prefix_to_json, build_request_body_generic, filter_empty_messages, get_client_ip,
         process_messages, remove_think_tags, truncate_json,
     },
+    metrics::active_requests::{ActiveRequestLabels, GuardedBody},
     models::requests::RequestPayload,
     state::app_state::AppState,
 };
@@ -228,6 +230,16 @@ async fn dispatch_request(
     let request_body = build_request_body_generic(payload, client_config, payload.is_streaming());
     let is_streaming = payload.is_streaming();
 
+    let active_labels = ActiveRequestLabels {
+        endpoint: api_endpoint.clone(),
+        model: request_body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        backend: client_config.name.clone(),
+    };
+
     let request_start = Instant::now();
     let response = build_and_send_request(
         app_state,
@@ -270,9 +282,9 @@ async fn dispatch_request(
         )
         .await?;
         resp.extensions_mut().insert(());
-        Ok(resp)
+        Ok(wrap_response_with_active_guard(resp, active_labels))
     } else {
-        process_non_streaming_response(
+        let resp = process_non_streaming_response(
             app_state,
             headers,
             addr,
@@ -282,8 +294,15 @@ async fn dispatch_request(
             response,
             request_elapsed,
         )
-        .await
+        .await?;
+        Ok(wrap_response_with_active_guard(resp, active_labels))
     }
+}
+
+fn wrap_response_with_active_guard(resp: Response, labels: ActiveRequestLabels) -> Response {
+    let (parts, body) = resp.into_parts();
+    let guarded = GuardedBody::new(body, labels);
+    Response::from_parts(parts, Body::new(guarded))
 }
 
 /// 处理非流式响应
