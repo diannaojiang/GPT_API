@@ -96,6 +96,7 @@ async fn handle_audio_request(
         .execute(
             &model_name,
             None,
+            Some(endpoint_path),
             move |client_config: &crate::config::types::ClientConfig, _current_model| {
                 let app_state = app_state_for_closure.clone();
                 let headers = headers.clone();

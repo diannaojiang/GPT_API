@@ -63,6 +63,17 @@ impl RequestPayload {
         }
     }
 
+    pub fn get_endpoint(&self) -> Option<&'static str> {
+        match self {
+            RequestPayload::Chat(_) => Some("chat/completions"),
+            RequestPayload::Completion(_) => Some("completions"),
+            RequestPayload::Embedding(_) => Some("embeddings"),
+            RequestPayload::Rerank(_) => Some("rerank"),
+            RequestPayload::Score(_) => Some("score"),
+            RequestPayload::Classify(_) => Some("classify"),
+        }
+    }
+
     /// 提取用于路由决策的特征键值对 (key_content, weight)
     /// 返回 None 表示不使用确定性路由，回退到随机模式。
     pub fn get_routing_keys(&self) -> Option<Vec<(String, usize)>> {

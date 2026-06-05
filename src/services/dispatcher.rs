@@ -2,10 +2,12 @@ use crate::app_error::AppError;
 use crate::client::client_manager::ClientManager;
 use crate::client::routing::select_clients;
 use crate::config::config_manager::ConfigManager;
-use crate::config::types::ClientConfig;
+use crate::config::types::{ClientConfig, LoadBalancingStrategy};
+use crate::metrics::active_requests::get_active_counts_for_clients;
 use crate::metrics::prometheus::FAILOVER_TOTAL;
 use crate::models::AccessLogMeta;
 use axum::response::{IntoResponse, Response};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -35,6 +37,7 @@ impl DispatcherService {
         &self,
         model_name: &str,
         routing_keys: &Option<Vec<(String, usize)>>,
+        endpoint: Option<&str>,
     ) -> Result<Vec<ClientConfig>, AppError> {
         let config_guard = self.config_manager.get_config_guard().await;
         let matching_clients = self
@@ -42,8 +45,27 @@ impl DispatcherService {
             .find_matching_clients(&config_guard, model_name)
             .await;
 
-        // 应用负载均衡策略（支持加权随机或加权投票）
-        let matching_clients = select_clients(matching_clients, routing_keys.clone());
+        let strategy = &config_guard.load_balancing.strategy;
+
+        // 最少连接策略需要读取 active counts
+        let active_counts: Option<HashMap<String, i64>> =
+            if matches!(strategy, LoadBalancingStrategy::LeastConnections) {
+                Some(get_active_counts_for_clients(
+                    &matching_clients,
+                    model_name,
+                    endpoint,
+                ))
+            } else {
+                None
+            };
+
+        // 应用负载均衡策略（支持确定路由、加权随机、最少连接）
+        let matching_clients = select_clients(
+            matching_clients,
+            routing_keys.clone(),
+            strategy,
+            active_counts.as_ref(),
+        );
 
         if matching_clients.is_empty() {
             Err(AppError::ClientNotFound(model_name.to_string()))
@@ -56,6 +78,7 @@ impl DispatcherService {
         &self,
         initial_model: &str,
         routing_keys: Option<Vec<(String, usize)>>,
+        endpoint: Option<&str>,
         request_callback: F,
     ) -> Response
     where
@@ -67,7 +90,10 @@ impl DispatcherService {
         let mut all_tried_clients = Vec::new();
 
         loop {
-            let clients = match self.resolve_clients(&current_model, &routing_keys).await {
+            let clients = match self
+                .resolve_clients(&current_model, &routing_keys, endpoint)
+                .await
+            {
                 Ok(c) => c,
                 Err(e) => return e.into_response(),
             };

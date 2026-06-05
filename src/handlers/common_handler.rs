@@ -128,6 +128,7 @@ pub async fn handle_request_logic(
 
     let initial_model = payload.get_model().to_string();
     let routing_keys = payload.get_routing_keys();
+    let endpoint = payload.get_endpoint();
     let payload_clone = payload.clone();
     let app_state_clone = app_state.clone();
     let headers_clone = headers.clone();
@@ -138,6 +139,7 @@ pub async fn handle_request_logic(
         .execute(
             &initial_model,
             routing_keys,
+            endpoint,
             move |client_config, model_name| {
                 let app_state_inner = app_state_clone.clone();
                 let headers_inner = headers_clone.clone();

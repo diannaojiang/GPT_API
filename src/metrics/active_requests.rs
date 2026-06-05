@@ -1,10 +1,32 @@
 use axum::body::Body;
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crate::config::types::ClientConfig;
 use crate::metrics::prometheus::ACTIVE_REQUESTS;
+
+/// 读取活跃请求计数，按 backend name 聚合。
+/// 仅当 strategy 为 LeastConnections 时由 dispatcher 调用。
+/// 对于没有 endpoint 的情况（如音频），使用 "unknown" 作为默认值。
+pub fn get_active_counts_for_clients(
+    clients: &[ClientConfig],
+    model_name: &str,
+    endpoint: Option<&str>,
+) -> HashMap<String, i64> {
+    let ep = endpoint.unwrap_or("unknown");
+    clients
+        .iter()
+        .map(|client| {
+            let count = ACTIVE_REQUESTS
+                .with_label_values(&[ep, model_name, &client.name])
+                .get();
+            (client.name.clone(), count)
+        })
+        .collect()
+}
 
 pub fn inc_active_requests(endpoint: &str, model: &str, backend: &str) {
     ACTIVE_REQUESTS
