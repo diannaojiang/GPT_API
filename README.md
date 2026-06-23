@@ -139,6 +139,8 @@ openai_clients:
     max_tokens: 4096            # 可选：最大令牌数覆盖
     headers:                    # 可选：自定义请求头
       "X-Custom-Header": "value"
+    extra_body: |               # 可选：JSON 字符串，仅当请求未提供同名字段时注入
+      {"frequency_penalty": 1, "presence_penalty": 0.91}
 ```
 
 ---

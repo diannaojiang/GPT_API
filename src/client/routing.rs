@@ -156,6 +156,7 @@ mod tests {
             special_prefix: None,
             stop: None,
             max_tokens: None,
+            extra_body: None,
         }
     }
 

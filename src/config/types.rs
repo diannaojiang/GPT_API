@@ -30,6 +30,8 @@ pub struct ClientConfig {
     pub special_prefix: Option<String>,
     pub stop: Option<Vec<String>>,
     pub max_tokens: Option<u32>,
+    /// JSON 字符串，仅当请求未提供同名字段时注入进请求体。
+    pub extra_body: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

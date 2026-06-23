@@ -183,6 +183,55 @@ pub fn build_request_body_generic(
     client_config: &ClientConfig,
     stream: bool,
 ) -> Value {
+    let mut body = build_request_body_inner(payload, client_config, stream);
+    apply_extra_body(
+        &mut body,
+        client_config.extra_body.as_deref(),
+        &client_config.name,
+    );
+    body
+}
+
+fn apply_extra_body(body: &mut Value, extra_body: Option<&str>, client_name: &str) {
+    let Some(raw) = extra_body else {
+        return;
+    };
+    if raw.trim().is_empty() {
+        return;
+    }
+
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "Client '{}' extra_body is not valid JSON, skipping injection: {}",
+                client_name,
+                e
+            );
+            return;
+        }
+    };
+
+    let (Some(target), Some(extra)) = (body.as_object_mut(), parsed.as_object()) else {
+        tracing::warn!(
+            "Client '{}' extra_body must be a JSON object, skipping injection",
+            client_name
+        );
+        return;
+    };
+
+    for (key, value) in extra {
+        if !target.contains_key(key) {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn build_request_body_inner(
+    payload: &RequestPayload,
+    client_config: &ClientConfig,
+    stream: bool,
+) -> Value {
     match payload {
         RequestPayload::Chat(p) => {
             let adjusted_max_tokens = adjust_max_tokens(client_config.max_tokens, p.max_tokens);
@@ -663,5 +712,73 @@ mod tests {
         apply_prefix_to_json(&mut body, "", true);
 
         assert_eq!(body["choices"][0]["message"]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_apply_extra_body_injects_absent_keys() {
+        let mut body = json!({"model": "m", "messages": []});
+        let extra = r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#;
+
+        apply_extra_body(&mut body, Some(extra), "test");
+
+        assert_eq!(body["frequency_penalty"], json!(1));
+        assert_eq!(body["presence_penalty"], json!(0.91));
+    }
+
+    #[test]
+    fn test_apply_extra_body_does_not_override_existing() {
+        let mut body = json!({"model": "m", "frequency_penalty": 2});
+        let extra = r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#;
+
+        apply_extra_body(&mut body, Some(extra), "test");
+
+        assert_eq!(body["frequency_penalty"], json!(2));
+        assert_eq!(body["presence_penalty"], json!(0.91));
+    }
+
+    #[test]
+    fn test_apply_extra_body_nested_object() {
+        let mut body = json!({"model": "m"});
+        let extra =
+            r#"{"chat_template_kwargs": {"enable_thinking": true, "reasoning_effort": "max"}}"#;
+
+        apply_extra_body(&mut body, Some(extra), "test");
+
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], json!(true));
+        assert_eq!(
+            body["chat_template_kwargs"]["reasoning_effort"],
+            json!("max")
+        );
+    }
+
+    #[test]
+    fn test_apply_extra_body_invalid_json_is_skipped() {
+        let mut body = json!({"model": "m"});
+        let before = body.clone();
+
+        apply_extra_body(&mut body, Some("{not valid json"), "test");
+
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn test_apply_extra_body_none_and_empty() {
+        let mut body = json!({"model": "m"});
+        let before = body.clone();
+
+        apply_extra_body(&mut body, None, "test");
+        apply_extra_body(&mut body, Some("   "), "test");
+
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn test_apply_extra_body_non_object_is_skipped() {
+        let mut body = json!({"model": "m"});
+        let before = body.clone();
+
+        apply_extra_body(&mut body, Some("[1, 2, 3]"), "test");
+
+        assert_eq!(body, before);
     }
 }
