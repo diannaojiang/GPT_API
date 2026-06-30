@@ -39,6 +39,7 @@ struct ToolCallAccumulator {
 
 struct StreamAccumulator {
     content: String,
+    reasoning: String,
     reasoning_content: String,
     role: String,
     tool_calls: HashMap<u64, ToolCallAccumulator>,
@@ -48,6 +49,7 @@ impl StreamAccumulator {
     fn new() -> Self {
         Self {
             content: String::new(),
+            reasoning: String::new(),
             reasoning_content: String::new(),
             role: "assistant".to_string(),
             tool_calls: HashMap::new(),
@@ -60,6 +62,9 @@ impl StreamAccumulator {
         }
         if let Some(c) = delta.get("content").and_then(|s| s.as_str()) {
             self.content.push_str(c);
+        }
+        if let Some(r) = delta.get("reasoning").and_then(|s| s.as_str()) {
+            self.reasoning.push_str(r);
         }
         if let Some(rc) = delta.get("reasoning_content").and_then(|s| s.as_str()) {
             self.reasoning_content.push_str(rc);
@@ -97,6 +102,9 @@ impl StreamAccumulator {
         let mut msg = json!({ "role": self.role });
         if !self.content.is_empty() {
             msg["content"] = json!(self.content);
+        }
+        if !self.reasoning.is_empty() {
+            msg["reasoning"] = json!(self.reasoning);
         }
         if !self.reasoning_content.is_empty() {
             msg["reasoning_content"] = json!(self.reasoning_content);

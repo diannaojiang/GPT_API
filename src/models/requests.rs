@@ -128,6 +128,11 @@ pub struct Message {
     pub role: String,
     #[serde(default)]
     pub content: Option<MessageContent>,
+    /// 思考字段，新版 vLLM 用 `reasoning`、旧版用 `reasoning_content`，二者等价，原样透传
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

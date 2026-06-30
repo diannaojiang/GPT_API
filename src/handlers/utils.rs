@@ -78,10 +78,8 @@ pub fn process_messages(messages: Vec<Message>) -> Vec<Message> {
             false
         };
 
-        // 2. 如果消息内容为空，则跳过
-        // 注意：这里有一个隐患，如果 content 是 Some("") 且没有 tool_calls，它会被视为 Empty。
-        // 但如果 content 是 None (tool call)，它会被保留。
-        if is_empty && msg.tool_calls.is_none() {
+        // 2. 如果消息内容为空，则跳过；但含工具调用或思考内容时保留
+        if is_empty && msg.tool_calls.is_none() && !has_reasoning(&msg) {
             continue;
         }
 
@@ -110,11 +108,17 @@ pub fn filter_empty_messages(messages: Vec<Message>) -> Vec<Message> {
                     MessageContent::Array(parts) => !parts.is_empty(),
                 }
             } else {
-                // 如果 content 为 None，只有当 tool_calls 存在时才保留
-                message.tool_calls.is_some()
+                // 如果 content 为 None，只有当存在工具调用或思考内容时才保留
+                message.tool_calls.is_some() || has_reasoning(message)
             }
         })
         .collect()
+}
+
+/// 判断消息是否携带思考内容（reasoning 或 reasoning_content，二者为 vLLM 不同版本的等价字段）
+fn has_reasoning(message: &Message) -> bool {
+    let non_empty = |s: &Option<String>| s.as_ref().is_some_and(|v| !v.trim().is_empty());
+    non_empty(&message.reasoning) || non_empty(&message.reasoning_content)
 }
 
 use once_cell::sync::Lazy;
@@ -452,6 +456,8 @@ mod tests {
         Message {
             role: role.to_string(),
             content: Some(MessageContent::String(content.to_string())),
+            reasoning: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -539,6 +545,8 @@ mod tests {
         let messages = vec![Message {
             role: "assistant".to_string(),
             content: None,
+            reasoning: None,
+            reasoning_content: None,
             tool_calls: Some(serde_json::json!([{"id": "call_123"}])),
             tool_call_id: None,
         }];
@@ -554,6 +562,8 @@ mod tests {
             content: Some(MessageContent::String(
                 "<think> thinking process</think> actual response".to_string(),
             )),
+            reasoning: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -572,6 +582,8 @@ mod tests {
             content: Some(MessageContent::String(
                 "<think> think 1</think> response 1<think> think 2</think> response 2".to_string(),
             )),
+            reasoning: None,
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         }];
