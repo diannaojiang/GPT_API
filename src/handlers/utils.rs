@@ -97,22 +97,22 @@ pub fn process_messages(messages: Vec<Message>) -> Vec<Message> {
     result
 }
 
-/// 过滤空消息
+/// 过滤空消息：content 为空时，仍保留携带工具调用或思考内容的消息
 pub fn filter_empty_messages(messages: Vec<Message>) -> Vec<Message> {
     messages
         .into_iter()
         .filter(|message| {
-            if let Some(content) = &message.content {
-                match content {
-                    MessageContent::String(c) => !c.trim().is_empty(),
-                    MessageContent::Array(parts) => !parts.is_empty(),
-                }
-            } else {
-                // 如果 content 为 None，只有当存在工具调用或思考内容时才保留
-                message.tool_calls.is_some() || has_reasoning(message)
-            }
+            has_content(message) || message.tool_calls.is_some() || has_reasoning(message)
         })
         .collect()
+}
+
+fn has_content(message: &Message) -> bool {
+    match &message.content {
+        Some(MessageContent::String(c)) => !c.trim().is_empty(),
+        Some(MessageContent::Array(parts)) => !parts.is_empty(),
+        None => false,
+    }
 }
 
 /// 判断消息是否携带思考内容（reasoning 或 reasoning_content，二者为 vLLM 不同版本的等价字段）
@@ -553,6 +553,56 @@ mod tests {
 
         let result = filter_empty_messages(messages);
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_empty_messages_keeps_empty_string_with_tool_calls() {
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: Some(MessageContent::String(String::new())),
+            reasoning: None,
+            reasoning_content: None,
+            tool_calls: Some(serde_json::json!([{"id": "call_123"}])),
+            tool_call_id: None,
+        }];
+
+        let result = filter_empty_messages(messages);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_empty_messages_keeps_empty_string_with_reasoning() {
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: Some(MessageContent::String(String::new())),
+            reasoning: Some("thinking...".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let result = filter_empty_messages(messages);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_process_then_filter_keeps_assistant_toolcall_with_whitespace_content() {
+        let messages = vec![
+            create_message("user", "现在的时间是多少"),
+            Message {
+                role: "assistant".to_string(),
+                content: Some(MessageContent::String("\n".to_string())),
+                reasoning: Some("用户想知道现在的时间".to_string()),
+                reasoning_content: None,
+                tool_calls: Some(serde_json::json!([{"id": "call_1", "type": "function"}])),
+                tool_call_id: None,
+            },
+        ];
+
+        let result = filter_empty_messages(process_messages(messages));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[1].role, "assistant");
+        assert!(result[1].tool_calls.is_some());
     }
 
     #[test]
