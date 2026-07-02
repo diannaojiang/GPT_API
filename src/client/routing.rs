@@ -157,6 +157,7 @@ mod tests {
             stop: None,
             max_tokens: None,
             extra_body: None,
+            ..Default::default()
         }
     }
 
