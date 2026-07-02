@@ -21,7 +21,7 @@ use axum::{
     Json,
 };
 use eventsource_stream::Eventsource;
-use futures::stream::StreamExt;
+use futures::stream::{self, StreamExt};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -373,6 +373,14 @@ pub async fn process_streaming_response(
     let special_prefix = client_config.special_prefix.clone().unwrap_or_default();
     let mut prefix_applied = false;
 
+    // Resolve thinking format once for the streaming path
+    let thinking_target = if is_chat {
+        let config = app_state.config_manager.get_config_guard().await;
+        config.resolve_thinking_format(client_config)
+    } else {
+        crate::config::types::ThinkingFormat::Passthrough
+    };
+
     // Setup logger channel (String instead of Value)
     let (tx, rx) = mpsc::unbounded_channel::<String>();
     let app_state_clone = app_state.clone();
@@ -422,12 +430,34 @@ pub async fn process_streaming_response(
         "/choices/0/text"
     };
 
+    let mut thinking_transformer =
+        crate::handlers::thinking_transformer::ThinkingStreamTransformer::new(thinking_target);
+    let apply_thinking = is_chat
+        && !matches!(
+            thinking_target,
+            crate::config::types::ThinkingFormat::Passthrough
+        );
+
     // 使用 eventsource-stream 进行鲁棒的 SSE 解析
-    let sse_stream = stream.eventsource().map(move |result| {
+    let sse_stream = stream.eventsource().flat_map(move |result| {
         match result {
             Ok(event) => {
                 if event.data == "[DONE]" {
-                    return Ok(Event::default().data("[DONE]"));
+                    if apply_thinking {
+                        if let Some(flush_delta) = thinking_transformer.finalize() {
+                            let flush_chunk =
+                                json!({"choices": [{"index": 0, "delta": flush_delta}]});
+                            if let Ok(flush_str) = simd_json::to_string(&flush_chunk) {
+                                let _ = tx.send(flush_str.clone());
+                                let flush_event = Event::default().data(flush_str);
+                                return stream::iter(vec![
+                                    Ok(flush_event),
+                                    Ok(Event::default().data("[DONE]")),
+                                ]);
+                            }
+                        }
+                    }
+                    return stream::iter(vec![Ok(Event::default().data("[DONE]"))]);
                 }
 
                 // 尝试解析 JSON 数据 (使用 simd-json 加速)
@@ -446,6 +476,13 @@ pub async fn process_streaming_response(
                         }
                     }
 
+                    // Apply thinking format normalization to delta
+                    if apply_thinking {
+                        if let Some(delta) = value.pointer_mut("/choices/0/delta") {
+                            thinking_transformer.transform_delta(delta);
+                        }
+                    }
+
                     // Serialize once
                     let json_str = simd_json::to_string(&value).unwrap_or_default();
 
@@ -453,15 +490,18 @@ pub async fn process_streaming_response(
                     let _ = tx.send(json_str.clone());
 
                     // Send string to client
-                    Ok(Event::default().data(json_str))
+                    stream::iter(vec![Ok(Event::default().data(json_str))])
                 } else {
                     // 如果不是 JSON（或者是其他类型的事件数据），原样转发
-                    Ok(Event::default().data(data_str))
+                    stream::iter(vec![Ok(Event::default().data(data_str))])
                 }
             }
             Err(e) => {
                 error!("Error parsing SSE stream: {}", e);
-                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                stream::iter(vec![Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e,
+                ))])
             }
         }
     });
