@@ -8,6 +8,9 @@ logs/
 /logs
 record.db
 record_*.db
+record.db-journal
+record.db-wal
+record.db-shm
 core.*
 
 # Local dev artifacts (should not be committed)
