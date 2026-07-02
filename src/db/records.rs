@@ -80,12 +80,12 @@ pub async fn log_non_streaming_request(
 
     let usage = response_body.get("usage");
     let prompt_tokens = usage
-        .and_then(|u| u.get("prompt_tokens"))
-        .and_then(|t| t.as_u64())
+        .and_then(|u| u.get("prompt_tokens").and_then(|t| t.as_u64()))
+        .or_else(|| usage.and_then(|u| u.get("input_tokens").and_then(|t| t.as_u64())))
         .unwrap_or(0);
     let completion_tokens = usage
-        .and_then(|u| u.get("completion_tokens"))
-        .and_then(|t| t.as_u64())
+        .and_then(|u| u.get("completion_tokens").and_then(|t| t.as_u64()))
+        .or_else(|| usage.and_then(|u| u.get("output_tokens").and_then(|t| t.as_u64())))
         .unwrap_or(0);
     let total_tokens = usage
         .and_then(|u| u.get("total_tokens"))

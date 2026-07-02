@@ -19,6 +19,7 @@ use crate::{
     client::proxy::{build_and_send_request, get_api_key},
     config::types::ClientConfig,
     db::records::log_non_streaming_request,
+    handlers::responses_stream_handler::process_responses_streaming_response,
     handlers::stream_handler::{extract_error_msg, process_streaming_response},
     handlers::utils::{
         apply_prefix_to_json, build_request_body_generic, filter_empty_messages, get_client_ip,
@@ -278,17 +279,30 @@ async fn dispatch_request(
     // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
     if payload.is_streaming() {
         let client_ip = get_client_ip(headers, addr);
-        let mut resp = process_streaming_response(
-            app_state.clone(),
-            headers.clone(),
-            payload.clone(),
-            client_ip,
-            response,
-            client_config,
-            is_chat,
-            &request_body,
-        )
-        .await?;
+        let mut resp = if matches!(payload, RequestPayload::Responses(_)) {
+            process_responses_streaming_response(
+                app_state.clone(),
+                headers.clone(),
+                payload.clone(),
+                client_ip,
+                response,
+                client_config,
+                &request_body,
+            )
+            .await?
+        } else {
+            process_streaming_response(
+                app_state.clone(),
+                headers.clone(),
+                payload.clone(),
+                client_ip,
+                response,
+                client_config,
+                is_chat,
+                &request_body,
+            )
+            .await?
+        };
         resp.extensions_mut().insert(());
         Ok(wrap_response_with_active_guard(resp, active_labels))
     } else {
