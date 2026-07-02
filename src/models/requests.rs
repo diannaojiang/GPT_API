@@ -29,6 +29,7 @@ pub enum RequestPayload {
     Rerank(RerankRequest),
     Score(ScoreRequest),
     Classify(ClassifyRequest),
+    Responses(ResponsesRequest),
 }
 
 impl RequestPayload {
@@ -40,6 +41,7 @@ impl RequestPayload {
             RequestPayload::Rerank(p) => &p.model,
             RequestPayload::Score(p) => &p.model,
             RequestPayload::Classify(p) => &p.model,
+            RequestPayload::Responses(p) => &p.model,
         }
     }
 
@@ -51,6 +53,7 @@ impl RequestPayload {
             RequestPayload::Rerank(p) => p.model = model_name,
             RequestPayload::Score(p) => p.model = model_name,
             RequestPayload::Classify(p) => p.model = model_name,
+            RequestPayload::Responses(p) => p.model = model_name,
         }
     }
 
@@ -58,6 +61,7 @@ impl RequestPayload {
         match self {
             RequestPayload::Chat(p) => p.stream.unwrap_or(false),
             RequestPayload::Completion(p) => p.stream.unwrap_or(false),
+            RequestPayload::Responses(p) => p.stream.unwrap_or(false),
             // 其他类型暂时不支持流式
             _ => false,
         }
@@ -71,6 +75,7 @@ impl RequestPayload {
             RequestPayload::Rerank(_) => Some("rerank"),
             RequestPayload::Score(_) => Some("score"),
             RequestPayload::Classify(_) => Some("classify"),
+            RequestPayload::Responses(_) => Some("responses"),
         }
     }
 
@@ -221,6 +226,16 @@ pub struct ScoreRequest {
 pub struct ClassifyRequest {
     pub model: String,
     pub input: Value, // String or Vec<String>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesRequest {
+    pub model: String,
+    pub input: Value, // string or array (OpenAI Responses API)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 // --- Internal Structures for Multipart/Audio Handling ---

@@ -318,6 +318,13 @@ fn build_request_body_inner(
         RequestPayload::Rerank(p) => serde_json::to_value(p).unwrap_or(json!({})),
         RequestPayload::Score(p) => serde_json::to_value(p).unwrap_or(json!({})),
         RequestPayload::Classify(p) => serde_json::to_value(p).unwrap_or(json!({})),
+        RequestPayload::Responses(p) => {
+            let mut body = serde_json::to_value(p).unwrap_or(json!({}));
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("stream".to_string(), json!(stream));
+            }
+            body
+        }
     }
 }
 

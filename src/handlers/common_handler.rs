@@ -121,6 +121,11 @@ pub async fn handle_request_logic(
                 return create_validation_error("Request param input is empty", &payload);
             }
         }
+        RequestPayload::Responses(p) => {
+            if is_empty_value(&p.input) {
+                return create_validation_error("Request param input is empty", &payload);
+            }
+        }
     }
 
     // 对 Chat 请求，预处理 messages
@@ -220,6 +225,7 @@ async fn dispatch_request(
         RequestPayload::Rerank(_) => ("rerank", false),
         RequestPayload::Score(_) => ("score", false),
         RequestPayload::Classify(_) => ("classify", false),
+        RequestPayload::Responses(_) => ("responses", false),
     };
     let url = format!(
         "{}/{}",

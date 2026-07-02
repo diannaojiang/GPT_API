@@ -99,6 +99,7 @@ pub async fn log_non_streaming_request(
         RequestPayload::Rerank(_) => "rerank",
         RequestPayload::Score(_) => "score",
         RequestPayload::Classify(_) => "classify",
+        RequestPayload::Responses(_) => "responses",
     };
 
     let tool_used = request_body.get("tools").is_some();
