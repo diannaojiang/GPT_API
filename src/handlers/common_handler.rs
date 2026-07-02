@@ -371,6 +371,20 @@ async fn process_non_streaming_response(
             );
         }
 
+        // Normalize thinking/reasoning format for chat completions only.
+        if matches!(payload, RequestPayload::Chat(_)) {
+            let target = {
+                let config = app_state.config_manager.get_config_guard().await;
+                config.resolve_thinking_format(client_config)
+            };
+            if !matches!(target, crate::config::types::ThinkingFormat::Passthrough) {
+                crate::handlers::thinking_transformer::transform_response_body(
+                    &mut response_body,
+                    target,
+                );
+            }
+        }
+
         // 在记录日志前检查并轮换数据库
         let app_state_clone = app_state.clone();
         let headers_clone = headers.clone();
