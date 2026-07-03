@@ -324,3 +324,153 @@ pub async fn process_anthropic_streaming_response(
 
     Ok(response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_accumulator_full_thinking_stream_sequence() {
+        let mut acc = AnthropicStreamAccumulator::new();
+
+        // message_start
+        acc.handle_message_start(&json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_123",
+                "model": "claude-sonnet-4-20250514",
+                "usage": {"input_tokens": 50, "output_tokens": 0}
+            }
+        }));
+
+        // content_block_start (thinking block at index 0)
+        acc.handle_content_block_start(&json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": ""}
+        }));
+
+        // content_block_delta (thinking_delta chunk 1)
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "Let me think about this"}
+        }));
+
+        // content_block_delta (thinking_delta chunk 2)
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": " more carefully"}
+        }));
+
+        // content_block_delta (signature_delta)
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "abc123signature"}
+        }));
+
+        // message_delta
+        acc.handle_message_delta(&json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+            "usage": {"output_tokens": 123}
+        }));
+
+        let result = acc.to_final_response_json();
+
+        // Verify id and model
+        assert_eq!(result["id"], "msg_123");
+        assert_eq!(result["model"], "claude-sonnet-4-20250514");
+
+        // Verify thinking content is accumulated correctly
+        assert_eq!(
+            result["content"][0]["thinking"],
+            "Let me think about this more carefully"
+        );
+
+        // Verify signature
+        assert_eq!(result["content"][0]["signature"], "abc123signature");
+
+        // Verify stop_reason
+        assert_eq!(result["stop_reason"], "end_turn");
+
+        // Verify usage output_tokens
+        assert_eq!(result["usage"]["output_tokens"], 123);
+    }
+
+    #[test]
+    fn test_accumulator_text_delta_accumulates() {
+        let mut acc = AnthropicStreamAccumulator::new();
+
+        // content_block_start (text block at index 0)
+        acc.handle_content_block_start(&json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""}
+        }));
+
+        // text_delta chunk 1
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Hello "}
+        }));
+
+        // text_delta chunk 2
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "World!"}
+        }));
+
+        let result = acc.to_final_response_json();
+
+        // Verify text is accumulated correctly
+        assert_eq!(result["content"][0]["text"], "Hello World!");
+    }
+
+    #[test]
+    fn test_accumulator_multiple_content_blocks_ordered_by_index() {
+        let mut acc = AnthropicStreamAccumulator::new();
+
+        // content_block_start at index 1 (thinking)
+        acc.handle_content_block_start(&json!({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "thinking", "thinking": ""}
+        }));
+
+        // content_block_start at index 0 (text) - added second but has lower index
+        acc.handle_content_block_start(&json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""}
+        }));
+
+        // Add text to index 0
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Answer"}
+        }));
+
+        // Add thinking to index 1
+        acc.handle_content_block_delta(&json!({
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "thinking_delta", "thinking": "Reasoning"}
+        }));
+
+        let result = acc.to_final_response_json();
+
+        // Verify content array is ordered by index (0 before 1)
+        assert_eq!(result["content"].as_array().unwrap().len(), 2);
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "Answer");
+        assert_eq!(result["content"][1]["type"], "thinking");
+        assert_eq!(result["content"][1]["thinking"], "Reasoning");
+    }
+}

@@ -273,3 +273,97 @@ pub struct AudioRequest {
     pub parts: Vec<MultipartPart>,
     pub endpoint: String, // To distinguish between transcriptions and translations internally
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // RequestPayload::AnthropicMessages tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_anthropic_messages_get_model() {
+        let payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            stream: None,
+            extra: serde_json::Map::new(),
+        });
+        assert_eq!(payload.get_model(), "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn test_anthropic_messages_set_model() {
+        let mut payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-3-haiku".to_string(),
+            stream: None,
+            extra: serde_json::Map::new(),
+        });
+        payload.set_model("claude-3-opus".to_string());
+        assert_eq!(payload.get_model(), "claude-3-opus");
+    }
+
+    #[test]
+    fn test_anthropic_messages_is_streaming_true() {
+        let payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            stream: Some(true),
+            extra: serde_json::Map::new(),
+        });
+        assert!(payload.is_streaming());
+    }
+
+    #[test]
+    fn test_anthropic_messages_is_streaming_false() {
+        let payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            stream: Some(false),
+            extra: serde_json::Map::new(),
+        });
+        assert!(!payload.is_streaming());
+    }
+
+    #[test]
+    fn test_anthropic_messages_is_streaming_none() {
+        let payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            stream: None,
+            extra: serde_json::Map::new(),
+        });
+        assert!(!payload.is_streaming());
+    }
+
+    #[test]
+    fn test_anthropic_messages_get_endpoint() {
+        let payload = RequestPayload::AnthropicMessages(AnthropicMessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            stream: None,
+            extra: serde_json::Map::new(),
+        });
+        assert_eq!(payload.get_endpoint(), Some("messages"));
+    }
+
+    #[test]
+    fn test_anthropic_messages_extra_flattens_additional_fields() {
+        // Verify that #[serde(flatten)] extra field correctly captures additional fields
+        let json_str = r#"{
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        }"#;
+        let request: AnthropicMessagesRequest = serde_json::from_str(json_str).unwrap();
+
+        assert_eq!(request.model, "claude-sonnet-4-20250514");
+        assert!(request.stream.is_none());
+
+        // Extra should contain max_tokens and messages
+        assert!(request.extra.contains_key("max_tokens"));
+        assert!(request.extra.contains_key("messages"));
+
+        // Verify the values are correctly parsed
+        assert_eq!(
+            request.extra.get("max_tokens").and_then(|v| v.as_i64()),
+            Some(1024)
+        );
+    }
+}

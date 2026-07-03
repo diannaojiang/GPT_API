@@ -137,3 +137,100 @@ pub async fn build_and_send_request_multipart(
 
     Ok(response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    fn make_headers() -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    fn make_client_config(api_key: Option<&str>) -> ClientConfig {
+        ClientConfig {
+            name: "test".to_string(),
+            base_url: "http://localhost".to_string(),
+            api_key: api_key.map(String::from),
+            model_match: crate::config::types::ModelMatch {
+                match_type: "exact".to_string(),
+                value: vec![],
+            },
+            priority: None,
+            fallback: None,
+            special_prefix: None,
+            stop: None,
+            max_tokens: None,
+            extra_body: None,
+            thinking_format: None,
+        }
+    }
+
+    fn with_authorization(headers: &mut HeaderMap, key: &str) {
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", key)).unwrap(),
+        );
+    }
+
+    fn with_x_api_key(headers: &mut HeaderMap, key: &str) {
+        headers.insert("x-api-key", HeaderValue::from_str(key).unwrap());
+    }
+
+    #[test]
+    fn test_get_api_key_from_client_config() {
+        let config = make_client_config(Some("config-key"));
+        let mut headers = make_headers();
+        with_authorization(&mut headers, "header-key");
+        with_x_api_key(&mut headers, "x-api-key-value");
+
+        // Client config key takes precedence over headers
+        assert_eq!(
+            get_api_key(&config, &headers),
+            Some("config-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_api_key_from_authorization_header() {
+        let config = make_client_config(None);
+        let mut headers = make_headers();
+        with_authorization(&mut headers, "sk-xxx");
+
+        // Should strip "Bearer " prefix
+        assert_eq!(get_api_key(&config, &headers), Some("sk-xxx".to_string()));
+    }
+
+    #[test]
+    fn test_get_api_key_from_x_api_key_header() {
+        let config = make_client_config(None);
+        let mut headers = make_headers();
+        with_x_api_key(&mut headers, "sk-yyy");
+
+        // x-api-key does not need prefix stripping
+        assert_eq!(get_api_key(&config, &headers), Some("sk-yyy".to_string()));
+    }
+
+    #[test]
+    fn test_get_api_key_authorization_takes_precedence_over_x_api_key() {
+        let config = make_client_config(None);
+        let mut headers = make_headers();
+        with_authorization(&mut headers, "sk-from-auth");
+        with_x_api_key(&mut headers, "sk-from-x-api-key");
+
+        // Authorization header takes precedence
+        assert_eq!(
+            get_api_key(&config, &headers),
+            Some("sk-from-auth".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_api_key_returns_none_when_no_source() {
+        let config = make_client_config(None);
+        let headers = make_headers();
+
+        // No api key anywhere
+        assert_eq!(get_api_key(&config, &headers), None);
+    }
+}
