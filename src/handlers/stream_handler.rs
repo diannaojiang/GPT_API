@@ -398,6 +398,7 @@ pub async fn process_streaming_response(
         RequestPayload::Score(_) => "score".to_string(),
         RequestPayload::Classify(_) => "classify".to_string(),
         RequestPayload::Responses(c) => c.model.clone(),
+        RequestPayload::AnthropicMessages(c) => c.model.clone(),
     };
     let backend = client_config.name.clone();
 

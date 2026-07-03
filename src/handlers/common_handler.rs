@@ -127,6 +127,8 @@ pub async fn handle_request_logic(
                 return create_validation_error("Request param input is empty", &payload);
             }
         }
+        // Anthropic Messages API 透传模式，messages 数组校验留给上游做
+        RequestPayload::AnthropicMessages(_) => {}
     }
 
     // 对 Chat 请求，预处理 messages
@@ -227,6 +229,7 @@ async fn dispatch_request(
         RequestPayload::Score(_) => ("score", false),
         RequestPayload::Classify(_) => ("classify", false),
         RequestPayload::Responses(_) => ("responses", false),
+        RequestPayload::AnthropicMessages(_) => ("messages", false),
     };
     let url = format!(
         "{}/{}",

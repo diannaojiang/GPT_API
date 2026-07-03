@@ -325,6 +325,13 @@ fn build_request_body_inner(
             }
             body
         }
+        RequestPayload::AnthropicMessages(p) => {
+            let mut body = serde_json::to_value(p).unwrap_or(json!({}));
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("stream".to_string(), json!(stream));
+            }
+            body
+        }
     }
 }
 

@@ -100,6 +100,7 @@ pub async fn log_non_streaming_request(
         RequestPayload::Score(_) => "score",
         RequestPayload::Classify(_) => "classify",
         RequestPayload::Responses(_) => "responses",
+        RequestPayload::AnthropicMessages(_) => "anthropic.messages",
     };
 
     let tool_used = request_body.get("tools").is_some();

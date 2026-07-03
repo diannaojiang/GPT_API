@@ -30,6 +30,8 @@ pub enum RequestPayload {
     Score(ScoreRequest),
     Classify(ClassifyRequest),
     Responses(ResponsesRequest),
+    /// Anthropic Messages API 透传模式（暂不接入路由/流式处理）
+    AnthropicMessages(AnthropicMessagesRequest),
 }
 
 impl RequestPayload {
@@ -42,6 +44,7 @@ impl RequestPayload {
             RequestPayload::Score(p) => &p.model,
             RequestPayload::Classify(p) => &p.model,
             RequestPayload::Responses(p) => &p.model,
+            RequestPayload::AnthropicMessages(p) => &p.model,
         }
     }
 
@@ -54,6 +57,7 @@ impl RequestPayload {
             RequestPayload::Score(p) => p.model = model_name,
             RequestPayload::Classify(p) => p.model = model_name,
             RequestPayload::Responses(p) => p.model = model_name,
+            RequestPayload::AnthropicMessages(p) => p.model = model_name,
         }
     }
 
@@ -62,6 +66,7 @@ impl RequestPayload {
             RequestPayload::Chat(p) => p.stream.unwrap_or(false),
             RequestPayload::Completion(p) => p.stream.unwrap_or(false),
             RequestPayload::Responses(p) => p.stream.unwrap_or(false),
+            RequestPayload::AnthropicMessages(p) => p.stream.unwrap_or(false),
             // 其他类型暂时不支持流式
             _ => false,
         }
@@ -76,6 +81,7 @@ impl RequestPayload {
             RequestPayload::Score(_) => Some("score"),
             RequestPayload::Classify(_) => Some("classify"),
             RequestPayload::Responses(_) => Some("responses"),
+            RequestPayload::AnthropicMessages(_) => Some("messages"),
         }
     }
 
@@ -233,6 +239,17 @@ pub struct ResponsesRequest {
     pub model: String,
     pub input: Value, // string or array (OpenAI Responses API)
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// Anthropic Messages API 请求结构（透传模式）
+/// 必填字段 model、max_tokens、messages 通过 extra 透传，仅 model 和 stream 显式提取用于路由决策
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicMessagesRequest {
+    pub model: String,
+    #[serde(default)]
     pub stream: Option<bool>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
