@@ -1,9 +1,10 @@
-use axum::{extract::State, Json};
+use axum::{extract::State, http::HeaderMap, Json};
 use futures::future::join_all;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
+use crate::client::proxy::get_api_key;
 use crate::config::types::{ClientConfig, ModelMatch};
 use crate::state::app_state::AppState;
 
@@ -22,10 +23,17 @@ fn model_matches_filter(model_id: &str, model_match: &ModelMatch) -> bool {
 async fn fetch_models_from_client(
     client_config: &ClientConfig,
     http_client: &Client,
+    api_key: &Option<String>,
 ) -> Option<Value> {
     let url = format!("{}/models", client_config.base_url.trim_end_matches('/'));
 
-    match http_client.get(&url).send().await {
+    let mut request_builder = http_client.get(&url);
+
+    if let Some(key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
+    }
+
+    match request_builder.send().await {
         Ok(response) => {
             if response.status().is_success() {
                 (response.json::<Value>().await).ok()
@@ -38,7 +46,10 @@ async fn fetch_models_from_client(
 }
 
 /// 获取所有模型的列表
-pub async fn list_models(State(app_state): State<Arc<AppState>>) -> Json<Value> {
+pub async fn list_models(
+    State(app_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<Value> {
     // 获取当前配置
     let config = app_state.config_manager.get_config().await;
 
@@ -54,9 +65,10 @@ pub async fn list_models(State(app_state): State<Arc<AppState>>) -> Json<Value> 
     for client_config in &config.openai_clients {
         let client_config_clone = client_config.clone();
         let http_client_clone = http_client.clone();
+        let api_key = get_api_key(client_config, &headers);
 
         let task = tokio::spawn(async move {
-            fetch_models_from_client(&client_config_clone, &http_client_clone).await
+            fetch_models_from_client(&client_config_clone, &http_client_clone, &api_key).await
         });
 
         tasks.push(task);
