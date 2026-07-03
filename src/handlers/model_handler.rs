@@ -4,7 +4,6 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
-use crate::client::proxy::get_api_key;
 use crate::config::types::{ClientConfig, ModelMatch};
 use crate::state::app_state::AppState;
 
@@ -65,7 +64,10 @@ pub async fn list_models(
     for client_config in &config.openai_clients {
         let client_config_clone = client_config.clone();
         let http_client_clone = http_client.clone();
-        let api_key = get_api_key(client_config, &headers);
+        let api_key = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
 
         let task = tokio::spawn(async move {
             fetch_models_from_client(&client_config_clone, &http_client_clone, &api_key).await
