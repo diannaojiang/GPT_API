@@ -1,0 +1,326 @@
+use crate::app_error::AppError;
+use crate::config::types::ClientConfig;
+use crate::db::records::log_non_streaming_request;
+use crate::handlers::stream_handler::extract_error_msg;
+use crate::handlers::utils::truncate_json;
+use crate::models::requests::RequestPayload;
+use crate::models::AccessLogMeta;
+use crate::state::app_state::AppState;
+use axum::{
+    http::HeaderMap,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
+    Json,
+};
+use eventsource_stream::Eventsource;
+use futures::stream::StreamExt;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::error;
+
+/// Accumulates Anthropic SSE stream events into a final JSON response for audit logging.
+#[derive(Debug)]
+struct AnthropicStreamAccumulator {
+    message_id: Option<String>,
+    role: String,
+    model: Option<String>,
+    content_blocks: BTreeMap<u64, Value>,
+    usage: Option<Value>,
+    stop_reason: Option<String>,
+    stop_sequence: Option<Value>,
+}
+
+impl AnthropicStreamAccumulator {
+    fn new() -> Self {
+        Self {
+            message_id: None,
+            role: "assistant".to_string(),
+            model: None,
+            content_blocks: BTreeMap::new(),
+            usage: None,
+            stop_reason: None,
+            stop_sequence: None,
+        }
+    }
+
+    fn handle_message_start(&mut self, data: &Value) {
+        if let Some(msg) = data.get("message") {
+            self.message_id = msg.get("id").and_then(|v| v.as_str()).map(String::from);
+            self.model = msg.get("model").and_then(|v| v.as_str()).map(String::from);
+            self.usage = msg.get("usage").cloned();
+        }
+    }
+
+    fn handle_content_block_start(&mut self, data: &Value) {
+        let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+        let content_block = data.get("content_block").cloned().unwrap_or(json!({}));
+        self.content_blocks.insert(index, content_block);
+    }
+
+    fn handle_content_block_delta(&mut self, data: &Value) {
+        let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+        let delta = match data.get("delta") {
+            Some(d) => d,
+            None => return,
+        };
+        let delta_type = delta.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        let block = self
+            .content_blocks
+            .entry(index)
+            .or_insert_with(|| json!({}));
+
+        match delta_type {
+            "thinking_delta" => {
+                if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                    let existing = block.get("thinking").and_then(|v| v.as_str()).unwrap_or("");
+                    block["thinking"] = json!(format!("{}{}", existing, thinking));
+                }
+            }
+            "text_delta" => {
+                if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                    let existing = block.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    block["text"] = json!(format!("{}{}", existing, text));
+                }
+            }
+            "signature_delta" => {
+                if let Some(sig) = delta.get("signature").and_then(|v| v.as_str()) {
+                    block["signature"] = json!(sig);
+                }
+            }
+            "input_json_delta" => {
+                if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                    let existing = block
+                        .get("partial_json")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    block["partial_json"] = json!(format!("{}{}", existing, partial));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_message_delta(&mut self, data: &Value) {
+        if let Some(delta) = data.get("delta") {
+            self.stop_reason = delta
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            self.stop_sequence = delta.get("stop_sequence").cloned();
+        }
+        if let Some(usage) = data.get("usage").cloned() {
+            self.usage = Some(usage);
+        }
+    }
+
+    fn to_final_response_json(&self) -> Value {
+        let content: Vec<Value> = self.content_blocks.values().cloned().collect();
+
+        json!({
+            "id": self.message_id.as_deref().unwrap_or("unknown"),
+            "type": "message",
+            "role": self.role,
+            "content": content,
+            "model": self.model.as_deref().unwrap_or("unknown"),
+            "stop_reason": self.stop_reason,
+            "stop_sequence": self.stop_sequence,
+            "usage": self.usage,
+        })
+    }
+}
+
+impl Default for AnthropicStreamAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+async fn anthropic_stream_logger_task(
+    mut rx: mpsc::UnboundedReceiver<String>,
+    app_state: Arc<AppState>,
+    headers: HeaderMap,
+    payload: RequestPayload,
+    request_body: Value,
+    client_ip: String,
+) {
+    let mut accumulator = AnthropicStreamAccumulator::new();
+
+    while let Some(chunk_str) = rx.recv().await {
+        let chunk: Value = match serde_json::from_str(&chunk_str) {
+            Ok(v) => v,
+            Err(e) => {
+                error!(
+                    "Failed to deserialize chunk in anthropic stream logger task: {}",
+                    e
+                );
+                continue;
+            }
+        };
+
+        let event_type = chunk.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        match event_type {
+            "message_start" => accumulator.handle_message_start(&chunk),
+            "content_block_start" => accumulator.handle_content_block_start(&chunk),
+            "content_block_delta" => accumulator.handle_content_block_delta(&chunk),
+            "content_block_stop" => {
+                // No special handling needed; block accumulation is already complete
+            }
+            "message_delta" => accumulator.handle_message_delta(&chunk),
+            "message_stop" => {
+                // Final event; break after processing to exit loop
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // Log the final response (or a minimal fallback if truncated stream)
+    let final_resp = accumulator.to_final_response_json();
+
+    // Check if we received at least one valid content block or message metadata
+    let has_content = !accumulator.content_blocks.is_empty()
+        || accumulator.message_id.is_some()
+        || accumulator.model.is_some();
+
+    if has_content {
+        log_non_streaming_request(
+            &app_state,
+            &headers,
+            &payload,
+            &request_body,
+            &final_resp,
+            client_ip,
+        )
+        .await;
+    } else {
+        // Truncated stream - build minimal fallback response
+        let fallback = json!({
+            "id": "unknown",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": "unknown",
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0
+            }
+        });
+        log_non_streaming_request(
+            &app_state,
+            &headers,
+            &payload,
+            &request_body,
+            &fallback,
+            client_ip,
+        )
+        .await;
+    }
+}
+
+pub async fn process_anthropic_streaming_response(
+    app_state: Arc<AppState>,
+    headers: HeaderMap,
+    payload: RequestPayload,
+    client_ip: String,
+    response: reqwest::Response,
+    client_config: &ClientConfig,
+    request_body: &Value,
+) -> Result<Response, AppError> {
+    // Error status early-return: identical logic to chat streaming handler
+    if !response.status().is_success() {
+        let status = response.status();
+        let body_bytes = response.bytes().await?;
+
+        // Use simd-json for error parsing
+        let mut buf = body_bytes.to_vec();
+        let body_json: Value = simd_json::from_slice(&mut buf).unwrap_or_else(|_| {
+            json!({
+                "error": String::from_utf8_lossy(&body_bytes).to_string(),
+                "error_type": "upstream_error"
+            })
+        });
+
+        let error_msg = extract_error_msg(&body_json);
+
+        let mut resp = (status, Json(body_json)).into_response();
+
+        if let Some(msg) = error_msg {
+            let log_body = serde_json::to_string(&truncate_json(request_body)).unwrap_or_default();
+            resp.extensions_mut().insert(AccessLogMeta {
+                model: "-".to_string(),
+                backend: "unknown".to_string(),
+                error: Some(msg),
+                request_body: Some(log_body),
+            });
+        }
+
+        return Ok(resp);
+    }
+
+    let stream = response.bytes_stream();
+
+    // Setup logger channel
+    let (tx, rx) = mpsc::unbounded_channel::<String>();
+    let app_state_clone = app_state.clone();
+    let headers_clone = headers.clone();
+    let payload_clone = payload.clone();
+    let request_body_clone = request_body.clone();
+    let client_ip_clone = client_ip.clone();
+
+    // Spawn logger task
+    tokio::spawn(async move {
+        anthropic_stream_logger_task(
+            rx,
+            app_state_clone,
+            headers_clone,
+            payload_clone,
+            request_body_clone,
+            client_ip_clone,
+        )
+        .await;
+    });
+
+    // SSE forwarding: preserve event type, forward data verbatim
+    let sse_stream = stream.eventsource().map(move |result| {
+        match result {
+            Ok(event) => {
+                // Send data to logger channel (best-effort, ignore send errors)
+                let _ = tx.send(event.data.clone());
+
+                // Preserve the SSE event type field
+                let mut out = Event::default().data(event.data);
+                if !event.event.is_empty() {
+                    out = out.event(event.event);
+                }
+                Ok::<_, std::io::Error>(out)
+            }
+            Err(e) => {
+                error!("Error parsing SSE stream for anthropic messages: {}", e);
+                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            }
+        }
+    });
+
+    // Create SSE response
+    let mut response = Sse::new(sse_stream)
+        .keep_alive(KeepAlive::default())
+        .into_response();
+
+    // Inject AccessLogMeta
+    response.extensions_mut().insert(AccessLogMeta {
+        model: payload.get_model().to_string(),
+        backend: client_config.name.clone(),
+        error: None,
+        request_body: None,
+    });
+
+    Ok(response)
+}

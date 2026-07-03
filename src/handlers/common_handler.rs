@@ -19,6 +19,7 @@ use crate::{
     client::proxy::{build_and_send_request, get_api_key},
     config::types::ClientConfig,
     db::records::log_non_streaming_request,
+    handlers::anthropic_stream_handler::process_anthropic_streaming_response,
     handlers::responses_stream_handler::process_responses_streaming_response,
     handlers::stream_handler::{extract_error_msg, process_streaming_response},
     handlers::utils::{
@@ -284,6 +285,17 @@ async fn dispatch_request(
         let client_ip = get_client_ip(headers, addr);
         let mut resp = if matches!(payload, RequestPayload::Responses(_)) {
             process_responses_streaming_response(
+                app_state.clone(),
+                headers.clone(),
+                payload.clone(),
+                client_ip,
+                response,
+                client_config,
+                &request_body,
+            )
+            .await?
+        } else if matches!(payload, RequestPayload::AnthropicMessages(_)) {
+            process_anthropic_streaming_response(
                 app_state.clone(),
                 headers.clone(),
                 payload.clone(),

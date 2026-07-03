@@ -1,3 +1,4 @@
+pub mod anthropic_stream_handler;
 pub mod audio_handler;
 pub mod common_handler;
 pub mod model_handler;
