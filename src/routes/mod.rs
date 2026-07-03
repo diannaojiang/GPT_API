@@ -16,6 +16,7 @@ pub mod completions;
 pub mod embeddings;
 pub mod extras;
 pub mod health;
+pub mod messages;
 pub mod models;
 pub mod responses;
 
@@ -30,6 +31,7 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
         .route("/v1/models", get(models::get_models))
         .route("/v1/chat/completions", post(chat::handle_chat_completion))
         .route("/v1/responses", post(responses::handle_responses))
+        .route("/v1/messages", post(messages::handle_messages))
         .route("/v1/completions", post(completions::handle_completion))
         .route("/v1/embeddings", post(embeddings::handle_embeddings))
         .route("/v1/rerank", post(extras::handle_rerank))
