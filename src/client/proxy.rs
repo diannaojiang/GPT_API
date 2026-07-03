@@ -15,7 +15,8 @@ use tokio::time::timeout;
 ///
 /// 优先级：
 /// 1. 客户端配置中的固定 key (`client_config.api_key`)
-/// 2. 请求头中的 Authorization Bearer token
+/// 2. 请求头中的 Authorization Bearer token (OpenAI 风格)
+/// 3. 请求头中的 x-api-key token (Anthropic 客户端标准)
 pub fn get_api_key(
     client_config: &ClientConfig,
     headers: &axum::http::HeaderMap,
@@ -26,11 +27,21 @@ pub fn get_api_key(
         }
     }
 
-    // 尝试从请求头提取
-    headers
+    // 尝试从 Authorization header 提取 (OpenAI 风格: "Bearer <key>")
+    if let Some(key) = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .map(|s| s.replace("Bearer ", ""))
+        .filter(|s| !s.is_empty())
+    {
+        return Some(key);
+    }
+
+    // 回退：尝试从 x-api-key header 提取 (Anthropic 客户端标准鉴权方式，值本身即 key，无需前缀处理)
+    headers
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
 }
 
