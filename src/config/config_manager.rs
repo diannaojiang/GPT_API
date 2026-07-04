@@ -1,4 +1,4 @@
-use super::types::Config;
+use super::types::{Config, ExtraBodyCached};
 use notify::{
     recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 };
@@ -35,8 +35,32 @@ impl ConfigManager {
 
     pub fn load_config(config_path: &str) -> Result<Config, Box<dyn std::error::Error>> {
         let contents = fs::read_to_string(config_path)?;
-        let config: Config = serde_yaml::from_str(&contents)?;
+        let mut config: Config = serde_yaml::from_str(&contents)?;
+        Self::populate_extra_body_cache(&mut config);
         Ok(config)
+    }
+
+    /// Parse each client's `extra_body` JSON string into the cached Value tree
+    /// so that runtime hot path avoids per-request serde_json::from_str.
+    fn populate_extra_body_cache(config: &mut Config) {
+        for client in &mut config.openai_clients {
+            let parsed = client.extra_body.as_deref().and_then(|raw| {
+                if raw.trim().is_empty() {
+                    return None;
+                }
+                match serde_json::from_str(raw) {
+                    Ok(serde_json::Value::Object(map)) => Some(map),
+                    _ => {
+                        tracing::warn!(
+                            "Client '{}' extra_body is not a valid JSON object, skipping",
+                            client.name
+                        );
+                        None
+                    }
+                }
+            });
+            client.extra_body_cached = ExtraBodyCached(parsed);
+        }
     }
 
     pub async fn get_config(&self) -> Config {

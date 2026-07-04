@@ -439,6 +439,10 @@ pub async fn process_streaming_response(
             crate::config::types::ThinkingFormat::Passthrough
         );
 
+    // Fast path: when no thinking transform and no special prefix,
+    // skip the simd-json parse→transform→reserialize round-trip entirely.
+    let needs_json_roundtrip = apply_thinking || !special_prefix.is_empty();
+
     // 使用 eventsource-stream 进行鲁棒的 SSE 解析
     let sse_stream = stream.eventsource().flat_map(move |result| {
         match result {
@@ -461,40 +465,37 @@ pub async fn process_streaming_response(
                     return stream::iter(vec![Ok(Event::default().data("[DONE]"))]);
                 }
 
-                // 尝试解析 JSON 数据 (使用 simd-json 加速)
-                let mut data_str = event.data;
-                if let Ok(mut value) = unsafe { simd_json::from_str::<Value>(&mut data_str) } {
-                    // 如果配置了 special_prefix，且还没应用过，则尝试注入
-                    if !prefix_applied && !special_prefix.is_empty() {
-                        if let Some(delta_content) = value.pointer_mut(content_json_pointer) {
-                            if let Some(s) = delta_content.as_str() {
-                                // 只有当内容不为空时才注入前缀
-                                if !s.is_empty() {
-                                    *delta_content = json!(format!("{}{}", special_prefix, s));
-                                    prefix_applied = true;
+                if needs_json_roundtrip {
+                    // 需要转换：解析 JSON → 注入前缀 / thinking 转换 → 重序列化
+                    let mut data_str = event.data;
+                    if let Ok(mut value) = unsafe { simd_json::from_str::<Value>(&mut data_str) } {
+                        if !prefix_applied && !special_prefix.is_empty() {
+                            if let Some(delta_content) = value.pointer_mut(content_json_pointer) {
+                                if let Some(s) = delta_content.as_str() {
+                                    if !s.is_empty() {
+                                        *delta_content = json!(format!("{}{}", special_prefix, s));
+                                        prefix_applied = true;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Apply thinking format normalization to delta
-                    if apply_thinking {
-                        if let Some(delta) = value.pointer_mut("/choices/0/delta") {
-                            thinking_transformer.transform_delta(delta);
+                        if apply_thinking {
+                            if let Some(delta) = value.pointer_mut("/choices/0/delta") {
+                                thinking_transformer.transform_delta(delta);
+                            }
                         }
+
+                        let json_str = simd_json::to_string(&value).unwrap_or_default();
+                        let _ = tx.send(json_str.clone());
+                        stream::iter(vec![Ok(Event::default().data(json_str))])
+                    } else {
+                        stream::iter(vec![Ok(Event::default().data(data_str))])
                     }
-
-                    // Serialize once
-                    let json_str = simd_json::to_string(&value).unwrap_or_default();
-
-                    // Send string clone to logger task (cheaper than Value clone)
-                    let _ = tx.send(json_str.clone());
-
-                    // Send string to client
-                    stream::iter(vec![Ok(Event::default().data(json_str))])
                 } else {
-                    // 如果不是 JSON（或者是其他类型的事件数据），原样转发
-                    stream::iter(vec![Ok(Event::default().data(data_str))])
+                    // Fast path: 无需任何转换，直接透传 event.data
+                    let _ = tx.send(event.data.clone());
+                    stream::iter(vec![Ok(Event::default().data(event.data))])
                 }
             }
             Err(e) => {

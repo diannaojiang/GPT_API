@@ -33,7 +33,8 @@ use crate::{
 
 fn prepare_chat_request(payload: &mut RequestPayload) {
     if let RequestPayload::Chat(ref mut p) = payload {
-        let processed_messages = process_messages(p.messages.clone());
+        let messages = std::mem::take(&mut p.messages);
+        let processed_messages = process_messages(messages);
         let filtered_messages = filter_empty_messages(processed_messages);
         p.messages = remove_think_tags(filtered_messages);
     }

@@ -1,5 +1,6 @@
-use crate::config::types::ClientConfig;
+use crate::config::types::{ClientConfig, ExtraBodyCached};
 use crate::models::requests::{Message, MessageContent, RequestPayload};
+use rayon::prelude::*;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -45,45 +46,47 @@ fn clean_ip(ip: &str) -> String {
     }
 }
 
+fn sanitize_msg(msg: &mut Message) {
+    if let Some(content) = &mut msg.content {
+        match content {
+            MessageContent::String(c) => {
+                let trimmed = c.trim().to_string();
+                *c = trimmed;
+            }
+            MessageContent::Array(parts) => {
+                for part in parts.iter_mut() {
+                    if part.r#type == "text" {
+                        if let Some(text) = &mut part.text {
+                            *text = text.trim().to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn msg_is_empty(msg: &Message) -> bool {
+    match &msg.content {
+        Some(MessageContent::String(c)) => c.is_empty(),
+        Some(MessageContent::Array(parts)) => parts.is_empty(),
+        None => true,
+    }
+}
+
 /// 处理消息：清理空白字符和合并连续的用户消息
-pub fn process_messages(messages: Vec<Message>) -> Vec<Message> {
+pub fn process_messages(mut messages: Vec<Message>) -> Vec<Message> {
     if messages.is_empty() {
         return vec![];
     }
 
+    messages.par_iter_mut().for_each(|msg| sanitize_msg(msg));
+
     let mut result: Vec<Message> = Vec::new();
-
-    for mut msg in messages {
-        // 1. 清理当前消息内容中的空白字符
-        let is_empty = if let Some(content) = &mut msg.content {
-            match content {
-                MessageContent::String(c) => {
-                    let trimmed = c.trim().to_string();
-                    *c = trimmed;
-                    c.is_empty()
-                }
-                MessageContent::Array(parts) => {
-                    parts.iter_mut().for_each(|part| {
-                        if part.r#type == "text" {
-                            if let Some(text) = &mut part.text {
-                                *text = text.trim().to_string();
-                            }
-                        }
-                    });
-                    parts.is_empty()
-                }
-            }
-        } else {
-            // 如果 content 为 None，可能是 tool call，视为非空
-            false
-        };
-
-        // 2. 如果消息内容为空，则跳过；但含工具调用或思考内容时保留
-        if is_empty && msg.tool_calls.is_none() && !has_reasoning(&msg) {
+    for msg in messages {
+        if msg_is_empty(&msg) && msg.tool_calls.is_none() && !has_reasoning(&msg) {
             continue;
         }
-
-        // 3. 处理合并逻辑
         if let Some(last_message) = result.last_mut() {
             if last_message.role == "user" && msg.role == "user" {
                 *last_message = msg;
@@ -128,7 +131,7 @@ static THINK_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<think>.*?</think>"
 /// 移除助手消息中的思考标签
 pub fn remove_think_tags(messages: Vec<Message>) -> Vec<Message> {
     messages
-        .into_iter()
+        .into_par_iter()
         .map(|mut message| {
             if message.role == "assistant" {
                 if let Some(MessageContent::String(content)) = &message.content {
@@ -188,43 +191,22 @@ pub fn build_request_body_generic(
     stream: bool,
 ) -> Value {
     let mut body = build_request_body_inner(payload, client_config, stream);
-    apply_extra_body(
+    apply_extra_body_cached(
         &mut body,
-        client_config.extra_body.as_deref(),
+        &client_config.extra_body_cached,
         &client_config.name,
     );
     body
 }
 
-fn apply_extra_body(body: &mut Value, extra_body: Option<&str>, client_name: &str) {
-    let Some(raw) = extra_body else {
+fn apply_extra_body_cached(body: &mut Value, extra: &ExtraBodyCached, _client_name: &str) {
+    let ExtraBodyCached(Some(ref map)) = extra else {
         return;
     };
-    if raw.trim().is_empty() {
-        return;
-    }
-
-    let parsed: Value = match serde_json::from_str(raw) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(
-                "Client '{}' extra_body is not valid JSON, skipping injection: {}",
-                client_name,
-                e
-            );
-            return;
-        }
-    };
-
-    let (Some(target), Some(extra)) = (body.as_object_mut(), parsed.as_object()) else {
-        tracing::warn!(
-            "Client '{}' extra_body must be a JSON object, skipping injection",
-            client_name
-        );
+    let Some(target) = body.as_object_mut() else {
         return;
     };
-
-    for (key, value) in extra {
+    for (key, value) in map {
         if !target.contains_key(key) {
             target.insert(key.clone(), value.clone());
         }

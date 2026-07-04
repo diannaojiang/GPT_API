@@ -19,6 +19,12 @@ impl ClientManager {
             .connect_timeout(std::time::Duration::from_secs(10))
             // 全局总超时：30分钟 (避免截断长流，但防止永久挂起)
             .timeout(std::time::Duration::from_secs(1800))
+            // TCP keepalive: 30秒, 防止中间设备静默切断长连接
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            // 空闲连接存活时长: 5分钟, 减少高并发下频繁建连开销
+            .pool_idle_timeout(std::time::Duration::from_secs(300))
+            // 每 host 最大空闲连接数: 64, 适配 HTTP/1.1 高并发
+            .pool_max_idle_per_host(64)
             .build()
             .expect("Failed to build reqwest client");
         ClientManager { client }

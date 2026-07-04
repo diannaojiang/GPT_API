@@ -18,6 +18,7 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "macros"
 tokio-stream = "0.1.17"
 futures = "0.3.31"
 rand = { version = "0.8.5", features = ["std_rng"] }
+rayon = "1.10"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.5"
 tracing-appender = "0.2.3"

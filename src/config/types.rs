@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Pre-parsed extra_body cache (set at config load, used at runtime).
+#[derive(Debug, Clone, Default)]
+pub struct ExtraBodyCached(pub Option<serde_json::Map<String, serde_json::Value>>);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoadBalancingStrategy {
@@ -35,6 +39,11 @@ pub struct ClientConfig {
     /// 每后端覆盖全局 thinking_format；None 时回退全局配置
     #[serde(default)]
     pub thinking_format: Option<ThinkingFormat>,
+
+    /// 预解析的 extra_body，配置加载时由字符串解析为 Value 树。
+    /// 运行时直接使用此缓存，避免每个请求重复 parse。
+    #[serde(skip)]
+    pub extra_body_cached: ExtraBodyCached,
 }
 
 impl Default for ClientConfig {
@@ -54,6 +63,7 @@ impl Default for ClientConfig {
             max_tokens: Default::default(),
             extra_body: Default::default(),
             thinking_format: Default::default(),
+            extra_body_cached: ExtraBodyCached::default(),
         }
     }
 }
@@ -138,6 +148,7 @@ mod tests {
             max_tokens: None,
             extra_body: None,
             thinking_format,
+            extra_body_cached: ExtraBodyCached::default(),
         }
     }
 

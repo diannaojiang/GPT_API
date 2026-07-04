@@ -163,6 +163,7 @@ mod tests {
             max_tokens: None,
             extra_body: None,
             thinking_format: None,
+            extra_body_cached: Default::default(),
         }
     }
 
