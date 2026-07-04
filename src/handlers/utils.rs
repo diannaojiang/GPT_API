@@ -775,9 +775,9 @@ mod tests {
     #[test]
     fn test_apply_extra_body_injects_absent_keys() {
         let mut body = json!({"model": "m", "messages": []});
-        let extra = r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#;
-
-        apply_extra_body(&mut body, Some(extra), "test");
+        let extra: serde_json::Map<_, _> =
+            serde_json::from_str(r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#).unwrap();
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(Some(extra)), "test");
 
         assert_eq!(body["frequency_penalty"], json!(1));
         assert_eq!(body["presence_penalty"], json!(0.91));
@@ -786,9 +786,9 @@ mod tests {
     #[test]
     fn test_apply_extra_body_does_not_override_existing() {
         let mut body = json!({"model": "m", "frequency_penalty": 2});
-        let extra = r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#;
-
-        apply_extra_body(&mut body, Some(extra), "test");
+        let extra: serde_json::Map<_, _> =
+            serde_json::from_str(r#"{"frequency_penalty": 1, "presence_penalty": 0.91}"#).unwrap();
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(Some(extra)), "test");
 
         assert_eq!(body["frequency_penalty"], json!(2));
         assert_eq!(body["presence_penalty"], json!(0.91));
@@ -797,10 +797,11 @@ mod tests {
     #[test]
     fn test_apply_extra_body_nested_object() {
         let mut body = json!({"model": "m"});
-        let extra =
-            r#"{"chat_template_kwargs": {"enable_thinking": true, "reasoning_effort": "max"}}"#;
-
-        apply_extra_body(&mut body, Some(extra), "test");
+        let extra: serde_json::Map<_, _> = serde_json::from_str(
+            r#"{"chat_template_kwargs": {"enable_thinking": true, "reasoning_effort": "max"}}"#,
+        )
+        .unwrap();
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(Some(extra)), "test");
 
         assert_eq!(body["chat_template_kwargs"]["enable_thinking"], json!(true));
         assert_eq!(
@@ -814,7 +815,7 @@ mod tests {
         let mut body = json!({"model": "m"});
         let before = body.clone();
 
-        apply_extra_body(&mut body, Some("{not valid json"), "test");
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(None), "test");
 
         assert_eq!(body, before);
     }
@@ -824,8 +825,8 @@ mod tests {
         let mut body = json!({"model": "m"});
         let before = body.clone();
 
-        apply_extra_body(&mut body, None, "test");
-        apply_extra_body(&mut body, Some("   "), "test");
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(None), "test");
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(None), "test");
 
         assert_eq!(body, before);
     }
@@ -835,7 +836,7 @@ mod tests {
         let mut body = json!({"model": "m"});
         let before = body.clone();
 
-        apply_extra_body(&mut body, Some("[1, 2, 3]"), "test");
+        apply_extra_body_cached(&mut body, &ExtraBodyCached(None), "test");
 
         assert_eq!(body, before);
     }
