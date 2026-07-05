@@ -86,6 +86,14 @@ fn main() {
             middleware::access_log::access_log_middleware,
         )); // Access Log 最外层
 
+        // ============================================================================
+        // 可选：Check_API 认证 + Token 追踪插件
+        // 编译时通过 --features check-api-auth 启用
+        // 无 feature 时以下代码被编译器移除，零性能影响
+        // ============================================================================
+        #[cfg(feature = "check-api-auth")]
+        let app = check_api_auth::add_auth_to_router(app);
+
         // Run our app with hyper, listening globally on port 8000 or SERVER_PORT env var
         let port = std::env::var("SERVER_PORT")
             .unwrap_or_else(|_| "8000".to_string())

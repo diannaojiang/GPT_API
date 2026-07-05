@@ -33,6 +33,13 @@ dashmap = "5.5"
 bytes = "1"
 http-body = "1"
 
+# Optional: Check_API authentication plugin (private code)
+check_api_auth = { path = "../Check_API/auth-lib", optional = true }
+
+[features]
+default = []
+check-api-auth = ["dep:check_api_auth"]
+
 [profile.release]
 lto = true
 codegen-units = 1
