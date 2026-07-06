@@ -3,6 +3,8 @@ use crate::config::types::ClientConfig;
 use crate::db::records::log_non_streaming_request;
 use crate::handlers::stream_handler::extract_error_msg;
 use crate::handlers::utils::truncate_json;
+use crate::metrics::middleware::get_metrics_sender;
+use crate::metrics::worker::MetricEvent;
 use crate::models::requests::RequestPayload;
 use crate::models::AccessLogMeta;
 use crate::state::app_state::AppState;
@@ -19,6 +21,7 @@ use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::error;
 
@@ -147,6 +150,11 @@ async fn anthropic_stream_logger_task(
     payload: RequestPayload,
     request_body: Value,
     client_ip: String,
+    model: String,
+    backend: String,
+    start_time: Instant,
+    endpoint: String,
+    status: String,
 ) {
     let mut accumulator = AnthropicStreamAccumulator::new();
 
@@ -179,6 +187,22 @@ async fn anthropic_stream_logger_task(
             _ => {}
         }
     }
+
+    let (completion_tokens, prompt_tokens) = accumulator
+        .usage
+        .as_ref()
+        .map(|u| {
+            let comp = u
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| u.get("output_tokens").and_then(|v| v.as_u64()));
+            let prompt = u
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| u.get("input_tokens").and_then(|v| v.as_u64()));
+            (comp, prompt)
+        })
+        .unwrap_or((None, None));
 
     // Log the final response (or a minimal fallback if truncated stream)
     let final_resp = accumulator.to_final_response_json();
@@ -222,6 +246,22 @@ async fn anthropic_stream_logger_task(
             client_ip,
         )
         .await;
+    }
+
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+    if let Some(sender) = get_metrics_sender() {
+        let event = MetricEvent {
+            endpoint,
+            status,
+            model: model.clone(),
+            backend: backend.clone(),
+            latency: total_elapsed,
+            is_success: true,
+            completion_tokens,
+            prompt_tokens,
+            elapsed: Some(total_elapsed),
+        };
+        let _ = sender.try_send(event);
     }
 }
 
@@ -274,6 +314,9 @@ pub async fn process_anthropic_streaming_response(
     let payload_clone = payload.clone();
     let request_body_clone = request_body.clone();
     let client_ip_clone = client_ip.clone();
+    let model_name = payload.get_model().to_string();
+    let backend_name = client_config.name.clone();
+    let stream_start_time = Instant::now();
 
     // Spawn logger task
     tokio::spawn(async move {
@@ -284,6 +327,11 @@ pub async fn process_anthropic_streaming_response(
             payload_clone,
             request_body_clone,
             client_ip_clone,
+            model_name,
+            backend_name,
+            stream_start_time,
+            "/v1/messages".to_string(),
+            "200".to_string(),
         )
         .await;
     });

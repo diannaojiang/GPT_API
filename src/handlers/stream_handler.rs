@@ -419,7 +419,12 @@ pub async fn process_streaming_response(
             model_name,
             backend,
             stream_start_time,
-            "/v1/chat/completions".to_string(),
+            (if is_chat {
+                "/v1/chat/completions"
+            } else {
+                "/v1/completions"
+            })
+            .to_string(),
             "200".to_string(),
         )
         .await;

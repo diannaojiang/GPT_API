@@ -331,6 +331,7 @@ async fn dispatch_request(
             &request_body,
             response,
             request_elapsed,
+            &api_endpoint,
         )
         .await?;
         Ok(wrap_response_with_active_guard(resp, active_labels))
@@ -353,6 +354,7 @@ async fn process_non_streaming_response(
     request_body: &Value,
     response: reqwest::Response,
     request_elapsed: f64,
+    api_endpoint: &str,
 ) -> Result<Response, AppError> {
     let model = payload.get_model().to_string();
     let backend = client_config.name.clone();
@@ -422,11 +424,16 @@ async fn process_non_streaming_response(
         });
 
         if let Some(usage) = response_body.get("usage") {
-            if let (Some(completion), Some(prompt)) = (
-                usage.get("completion_tokens").and_then(|v| v.as_u64()),
-                usage.get("prompt_tokens").and_then(|v| v.as_u64()),
-            ) {
-                let endpoint = "/v1/chat/completions".to_string();
+            let completion = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| usage.get("output_tokens").and_then(|v| v.as_u64()));
+            let prompt = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| usage.get("input_tokens").and_then(|v| v.as_u64()));
+            if let (Some(completion), Some(prompt)) = (completion, prompt) {
+                let endpoint = api_endpoint.to_string();
                 let model_clone = model.clone();
                 let backend_clone = backend.clone();
                 let elapsed = request_elapsed;
