@@ -10,6 +10,10 @@ use client::client_manager::ClientManager;
 use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
 
+#[cfg(feature = "check-api-auth")]
+#[path = "../../Check_API/auth-lib/src/lib.rs"]
+mod check_api_auth;
+
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 

@@ -32,13 +32,12 @@ prometheus = "0.13"
 dashmap = "5.5"
 bytes = "1"
 http-body = "1"
-
-# Optional: Check_API authentication plugin (private code)
-check_api_auth = { path = "../Check_API/auth-lib", optional = true }
+http-body-util = "0.1"
+pin-project-lite = "0.2"
 
 [features]
 default = []
-check-api-auth = ["dep:check_api_auth"]
+check-api-auth = []
 
 [profile.release]
 lto = true
