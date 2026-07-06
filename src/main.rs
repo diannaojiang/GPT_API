@@ -11,8 +11,19 @@ use db::{check_and_rotate, init_db_pool};
 use state::app_state::AppState;
 
 #[cfg(feature = "check-api-auth")]
-#[path = "../../Check_API/auth-lib/src/lib.rs"]
-mod check_api_auth;
+mod check_api_auth {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../Check_API/auth-lib/src/lib.rs"
+    ));
+}
+
+#[cfg(not(feature = "check-api-auth"))]
+mod check_api_auth {
+    pub fn add_auth_to_router(router: axum::Router) -> axum::Router {
+        router
+    }
+}
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
