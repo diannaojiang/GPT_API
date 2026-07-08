@@ -238,3 +238,13 @@ pub static ERRORS_TOTAL: once_cell::sync::Lazy<CounterVec> = once_cell::sync::La
     )
     .unwrap()
 });
+
+pub static TOKENS_MISSING_TOTAL: once_cell::sync::Lazy<CounterVec> =
+    once_cell::sync::Lazy::new(|| {
+        register_counter_vec!(
+            "gpt_api_tokens_missing_total",
+            "Total requests without token usage info (embeddings, rerank, etc.)",
+            &["endpoint", "model", "backend"]
+        )
+        .unwrap()
+    });

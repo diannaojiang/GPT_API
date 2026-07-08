@@ -29,8 +29,8 @@ use tokio::sync::mpsc;
 use crate::metrics::prometheus::{
     ACTIVE_REQUESTS, ACTIVE_REQUESTS_10M_MAX, ACTIVE_REQUESTS_1H_MAX, ACTIVE_REQUESTS_1M_MAX,
     LATENCY, LATENCY_10M_MAX, LATENCY_1H_MAX, LATENCY_1M_MAX, REQUESTS_TOTAL, RPS, SUCCESS_RATE,
-    SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M, TOKENS_TOTAL, TOKEN_DISTRIBUTION, TPS,
-    TPS_10M_AVG, TPS_1H_AVG, TPS_1M_AVG,
+    SUCCESS_RATE_10M, SUCCESS_RATE_1H, SUCCESS_RATE_1M, TOKENS_MISSING_TOTAL, TOKENS_TOTAL,
+    TOKEN_DISTRIBUTION, TPS, TPS_10M_AVG, TPS_1H_AVG, TPS_1M_AVG,
 };
 use crate::metrics::sliding_window;
 
@@ -152,10 +152,9 @@ fn process_metric_event(event: MetricEvent) {
         .with_label_values(&[&endpoint, &model, &backend])
         .set(sliding_window::get_success_overall());
 
-    // 更新 RPS
-    if latency > 0.0 {
-        RPS.with_label_values(&[&endpoint]).set(1.0 / latency);
-    }
+    sliding_window::update_rps_windows(&endpoint);
+    RPS.with_label_values(&[&endpoint])
+        .set(sliding_window::get_rps_1m(&endpoint));
 
     // 处理 TPS 和 Token 统计（仅当有 usage 信息时）
     if let (Some(completion), Some(prompt), Some(elapsed_secs)) =
@@ -191,6 +190,10 @@ fn process_metric_event(event: MetricEvent) {
         TOKEN_DISTRIBUTION
             .with_label_values(&[&model, &backend, "completion"])
             .observe(completion as f64);
+    } else {
+        TOKENS_MISSING_TOTAL
+            .with_label_values(&[&endpoint, &model, &backend])
+            .inc();
     }
 }
 

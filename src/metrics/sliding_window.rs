@@ -67,6 +67,21 @@ impl SlidingWindow {
         }
         data.iter().map(|(v, _)| *v).sum::<f64>() / data.len() as f64
     }
+
+    fn count(&self) -> usize {
+        let mut data = self.data.lock().unwrap();
+        let now = Instant::now();
+
+        while let Some((_, timestamp)) = data.front() {
+            if now.duration_since(*timestamp) >= self.window_duration {
+                data.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        data.len()
+    }
 }
 
 type WindowMap = DashMap<String, SlidingWindow>;
@@ -82,6 +97,10 @@ static LATENCY_WINDOWS_1H: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static TPS_WINDOWS_1M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static TPS_WINDOWS_10M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static TPS_WINDOWS_1H: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
+
+static RPS_WINDOWS_1M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
+static RPS_WINDOWS_10M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
+static RPS_WINDOWS_1H: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 
 static ACTIVE_WINDOWS_1M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
 static ACTIVE_WINDOWS_10M: Lazy<WindowMap> = Lazy::new(|| DashMap::new());
@@ -240,4 +259,32 @@ pub fn update_success_overall(success: bool) {
 
 pub fn get_success_overall() -> f64 {
     SUCCESS_WINDOW_OVERALL.avg()
+}
+
+pub fn update_rps_windows(endpoint: &str) {
+    get_or_create_window(&RPS_WINDOWS_1M, endpoint, Duration::from_secs(60));
+    RPS_WINDOWS_1M.get(endpoint).unwrap().push(1.0);
+    get_or_create_window(&RPS_WINDOWS_10M, endpoint, Duration::from_secs(600));
+    RPS_WINDOWS_10M.get(endpoint).unwrap().push(1.0);
+    get_or_create_window(&RPS_WINDOWS_1H, endpoint, Duration::from_secs(3600));
+    RPS_WINDOWS_1H.get(endpoint).unwrap().push(1.0);
+}
+
+fn get_rps(window: &WindowMap, endpoint: &str, window_secs: f64) -> f64 {
+    window
+        .get(endpoint)
+        .map(|w| w.count() as f64 / window_secs)
+        .unwrap_or(0.0)
+}
+
+pub fn get_rps_1m(endpoint: &str) -> f64 {
+    get_rps(&RPS_WINDOWS_1M, endpoint, 60.0)
+}
+
+pub fn get_rps_10m(endpoint: &str) -> f64 {
+    get_rps(&RPS_WINDOWS_10M, endpoint, 600.0)
+}
+
+pub fn get_rps_1h(endpoint: &str) -> f64 {
+    get_rps(&RPS_WINDOWS_1H, endpoint, 3600.0)
 }
