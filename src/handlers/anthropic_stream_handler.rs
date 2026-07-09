@@ -4,6 +4,8 @@ use crate::db::records::log_non_streaming_request;
 use crate::handlers::stream_handler::extract_error_msg;
 use crate::handlers::utils::truncate_json;
 use crate::metrics::middleware::get_metrics_sender;
+use crate::metrics::prometheus::{TTFT, TTFT_10M_MAX, TTFT_1H_MAX, TTFT_1M_MAX};
+use crate::metrics::sliding_window;
 use crate::metrics::worker::MetricEvent;
 use crate::models::requests::RequestPayload;
 use crate::models::AccessLogMeta;
@@ -157,8 +159,25 @@ async fn anthropic_stream_logger_task(
     status: String,
 ) {
     let mut accumulator = AnthropicStreamAccumulator::new();
+    let mut _ttft_recorded = false;
 
     while let Some(chunk_str) = rx.recv().await {
+        if !_ttft_recorded {
+            _ttft_recorded = true;
+            let ttft = start_time.elapsed().as_secs_f64();
+            TTFT.with_label_values(&[&model, &backend]).observe(ttft);
+            sliding_window::update_ttft_windows(ttft, &model, &backend);
+            TTFT_1M_MAX
+                .with_label_values(&[&model, &backend])
+                .set(sliding_window::get_ttft_1m_max(&model, &backend));
+            TTFT_10M_MAX
+                .with_label_values(&[&model, &backend])
+                .set(sliding_window::get_ttft_10m_max(&model, &backend));
+            TTFT_1H_MAX
+                .with_label_values(&[&model, &backend])
+                .set(sliding_window::get_ttft_1h_max(&model, &backend));
+        }
+
         let chunk: Value = match serde_json::from_str(&chunk_str) {
             Ok(v) => v,
             Err(e) => {
