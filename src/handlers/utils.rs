@@ -402,7 +402,28 @@ where
         // 1. 先读取 Bytes
         let bytes = match Bytes::from_request(req, state).await {
             Ok(b) => b,
-            Err(err) => return Err(err.into_response()),
+            Err(err) => {
+                let err_msg = err.to_string();
+                if err_msg.contains("peer closed connection")
+                    || err_msg.contains("closed connection")
+                    || err_msg.contains("connection closed")
+                {
+                    let error_response = json!({
+                        "error": "客户端在请求体传输完成前断开了连接，请检查网络稳定性或增大客户端超时设置",
+                        "error_type": "client_disconnect"
+                    });
+                    let mut response =
+                        (StatusCode::BAD_REQUEST, Json(error_response)).into_response();
+                    response.extensions_mut().insert(AccessLogMeta {
+                        model: "-".to_string(),
+                        backend: "unknown".to_string(),
+                        error: Some(format!("Client disconnected prematurely: {}", err_msg)),
+                        request_body: None,
+                    });
+                    return Err(response);
+                }
+                return Err(err.into_response());
+            }
         };
 
         // 2. 尝试反序列化 (使用 simd-json 加速)
