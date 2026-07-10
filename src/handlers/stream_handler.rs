@@ -461,7 +461,7 @@ pub async fn process_streaming_response(
                                 let _ = tx.send(flush_str.clone());
                                 let flush_event = Event::default().data(flush_str);
                                 return stream::iter(vec![
-                                    Ok(flush_event),
+                                    Ok::<_, std::io::Error>(flush_event),
                                     Ok(Event::default().data("[DONE]")),
                                 ]);
                             }
@@ -505,10 +505,20 @@ pub async fn process_streaming_response(
             }
             Err(e) => {
                 error!("Error parsing SSE stream: {}", e);
-                stream::iter(vec![Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e,
-                ))])
+                // 上游断流时不硬切裸连接，而是下发显式 error 事件 + [DONE]，让下游得到干净终止。
+                let err_chunk = json!({
+                    "error": {
+                        "message": format!("upstream stream interrupted: {}", e),
+                        "type": "upstream_error"
+                    }
+                });
+                let err_str = simd_json::to_string(&err_chunk).unwrap_or_else(|_| {
+                    "{\"error\":{\"message\":\"upstream stream interrupted\",\"type\":\"upstream_error\"}}".to_string()
+                });
+                stream::iter(vec![
+                    Ok(Event::default().data(err_str)),
+                    Ok(Event::default().data("[DONE]")),
+                ])
             }
         }
     });

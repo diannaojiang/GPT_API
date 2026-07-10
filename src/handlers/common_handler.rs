@@ -10,10 +10,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use bytes::Bytes;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::warn;
 
 use crate::{
     client::proxy::{build_and_send_request, get_api_key},
@@ -215,6 +217,134 @@ pub async fn handle_request_logic(
     response
 }
 
+// 仅重试连接层瞬时错误：连接失败、或响应体在传完前被对端截断（peer closed / reset / incomplete）。
+// 不重试超时，避免在长请求上翻倍等待。
+fn is_retryable_transient_error(err: &reqwest::Error) -> bool {
+    if err.is_connect() {
+        return true;
+    }
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("peer closed connection")
+        || msg.contains("connection closed")
+        || msg.contains("connection reset")
+        || msg.contains("incomplete message")
+        || msg.contains("broken pipe")
+}
+
+fn classify_boxed_send_error(e: Box<dyn std::error::Error + Send + Sync>) -> (AppError, bool) {
+    match e.downcast::<reqwest::Error>() {
+        Ok(req_err) => {
+            let retryable = is_retryable_transient_error(&req_err);
+            let error_text = if req_err.is_timeout() {
+                "Request timed out"
+            } else if req_err.is_connect() {
+                "Failed to connect to host"
+            } else {
+                "External request failed"
+            };
+            (
+                AppError::InternalServerError(error_text.to_string()),
+                retryable,
+            )
+        }
+        Err(original_err) => (
+            AppError::InternalServerError(original_err.to_string()),
+            false,
+        ),
+    }
+}
+
+// 流式路径只重试到「收到响应头」为止；一旦开始向下游转发就不可重试。
+async fn send_streaming_with_retry(
+    app_state: &Arc<AppState>,
+    client_config: &ClientConfig,
+    api_key: &Option<String>,
+    url: &str,
+    request_body: &Value,
+    api_endpoint: &str,
+) -> Result<reqwest::Response, AppError> {
+    for attempt in 1..=2u8 {
+        match build_and_send_request(
+            app_state,
+            client_config,
+            api_key,
+            url,
+            request_body,
+            true,
+            api_endpoint,
+        )
+        .await
+        {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                let (app_err, retryable) = classify_boxed_send_error(e);
+                if retryable && attempt == 1 {
+                    warn!(
+                        "Transient error contacting {} (attempt {}), retrying with a fresh connection: {}",
+                        client_config.name, attempt, app_err
+                    );
+                    continue;
+                }
+                return Err(app_err);
+            }
+        }
+    }
+    unreachable!("send_streaming_with_retry loop always returns")
+}
+
+// 非流式路径把 send 与 body 读取放在同一重试域：body 尚未下发给下游，重试完全安全。
+async fn fetch_non_streaming_with_retry(
+    app_state: &Arc<AppState>,
+    client_config: &ClientConfig,
+    api_key: &Option<String>,
+    url: &str,
+    request_body: &Value,
+    api_endpoint: &str,
+) -> Result<(StatusCode, Bytes), AppError> {
+    for attempt in 1..=2u8 {
+        let response = match build_and_send_request(
+            app_state,
+            client_config,
+            api_key,
+            url,
+            request_body,
+            false,
+            api_endpoint,
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let (app_err, retryable) = classify_boxed_send_error(e);
+                if retryable && attempt == 1 {
+                    warn!(
+                        "Transient error contacting {} (attempt {}), retrying with a fresh connection: {}",
+                        client_config.name, attempt, app_err
+                    );
+                    continue;
+                }
+                return Err(app_err);
+            }
+        };
+
+        let status = response.status();
+        match response.bytes().await {
+            Ok(bytes) => return Ok((status, bytes)),
+            Err(e) => {
+                if is_retryable_transient_error(&e) && attempt == 1 {
+                    warn!(
+                        "Upstream {} closed the response body prematurely (attempt {}), retrying: {}",
+                        client_config.name, attempt, e
+                    );
+                    continue;
+                }
+                return Err(AppError::ReqwestError(e));
+            }
+        }
+    }
+    unreachable!("fetch_non_streaming_with_retry loop always returns")
+}
+
 /// 统一的请求派发函数
 async fn dispatch_request(
     app_state: &Arc<AppState>,
@@ -255,34 +385,18 @@ async fn dispatch_request(
     };
 
     let request_start = Instant::now();
-    let response = build_and_send_request(
-        app_state,
-        client_config,
-        &api_key,
-        &url,
-        &request_body,
-        is_streaming,
-        &api_endpoint,
-    )
-    .await
-    .map_err(|e| match e.downcast::<reqwest::Error>() {
-        Ok(req_err) => {
-            let error_text = if req_err.is_timeout() {
-                "Request timed out"
-            } else if req_err.is_connect() {
-                "Failed to connect to host"
-            } else {
-                "External request failed"
-            };
-            AppError::InternalServerError(error_text.to_string())
-        }
-        Err(original_err) => AppError::InternalServerError(original_err.to_string()),
-    })?;
-    let request_elapsed = request_start.elapsed().as_secs_f64();
 
-    // 核心修改：检查是否应该进入流式处理
-    // 只有当用户请求流式 且 响应状态码为成功时，才进入流式处理
-    if payload.is_streaming() {
+    if is_streaming {
+        let response = send_streaming_with_retry(
+            app_state,
+            client_config,
+            &api_key,
+            &url,
+            &request_body,
+            &api_endpoint,
+        )
+        .await?;
+
         let client_ip = get_client_ip(headers, addr);
         let mut resp = if matches!(payload, RequestPayload::Responses(_)) {
             process_responses_streaming_response(
@@ -322,6 +436,17 @@ async fn dispatch_request(
         resp.extensions_mut().insert(());
         Ok(wrap_response_with_active_guard(resp, active_labels))
     } else {
+        let (status, body_bytes) = fetch_non_streaming_with_retry(
+            app_state,
+            client_config,
+            &api_key,
+            &url,
+            &request_body,
+            &api_endpoint,
+        )
+        .await?;
+        let request_elapsed = request_start.elapsed().as_secs_f64();
+
         let resp = process_non_streaming_response(
             app_state,
             headers,
@@ -329,7 +454,8 @@ async fn dispatch_request(
             payload,
             client_config,
             &request_body,
-            response,
+            status,
+            body_bytes,
             request_elapsed,
             &api_endpoint,
         )
@@ -352,19 +478,14 @@ async fn process_non_streaming_response(
     payload: &RequestPayload,
     client_config: &ClientConfig,
     request_body: &Value,
-    response: reqwest::Response,
+    status: StatusCode,
+    body_bytes: Bytes,
     request_elapsed: f64,
     api_endpoint: &str,
 ) -> Result<Response, AppError> {
     let model = payload.get_model().to_string();
     let backend = client_config.name.clone();
-    let status = response.status();
 
-    // Get AccessLogMeta from response BEFORE consuming it with bytes()
-    let access_log_meta = response.extensions().get::<AccessLogMeta>().cloned();
-    // let mut response_body: Value = response.json().await?;
-    // 使用 simd-json 加速大 JSON 解析
-    let body_bytes = response.bytes().await?;
     let mut buf = body_bytes.to_vec();
     let mut response_body: Value = simd_json::from_slice(&mut buf).map_err(|e| {
         AppError::InternalServerError(format!(
@@ -459,11 +580,7 @@ async fn process_non_streaming_response(
     // Create new response from JSON body
     let mut resp = Json(response_body).into_response();
 
-    if let Some(meta) = access_log_meta {
-        resp.extensions_mut().insert(meta);
-    }
-    // 如果有状态码不一致（例如 Json 可能会默认 200，或者我们需要显式设置 status）， Axum 的 Json extractor 通常会设置 200。
-    // 我们需要手动把 reqwest 的 status 设置回去。
+    // Json extractor 默认设 200，这里手动把上游真实 status 设回去。
     *resp.status_mut() = status;
 
     if let Some(msg) = error_msg {
