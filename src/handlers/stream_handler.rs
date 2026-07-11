@@ -329,6 +329,47 @@ async fn stream_logger_task(
     }
 }
 
+/// 无分配预扫描，识别 `"choices":[]`（容错冒号/括号后空白）。
+/// 让快速通道对正常 chunk 保持零拷贝，仅在命中时才付出解析成本。
+fn has_empty_choices_marker(data: &str) -> bool {
+    const KEY: &str = "\"choices\"";
+    let mut search = data;
+    while let Some(pos) = search.find(KEY) {
+        let after = search[pos + KEY.len()..].trim_start();
+        if let Some(after) = after.strip_prefix(':') {
+            let after = after.trim_start();
+            if let Some(after) = after.strip_prefix('[') {
+                if after.trim_start().starts_with(']') {
+                    return true;
+                }
+            }
+        }
+        search = &search[pos + KEY.len()..];
+    }
+    false
+}
+
+/// 为 vLLM 结尾的 `"choices":[]` usage chunk 注入占位 choice，
+/// 使严格解析 `choices[0]` 的下游（如 OpenWebUI）不越界崩溃，且不丢 usage。
+/// 仅改动"存在但为空"的数组；缺失或非空时不动。返回是否注入。
+fn ensure_non_empty_choices(value: &mut Value, is_chat: bool) -> bool {
+    let is_empty_array = value
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .map(|arr| arr.is_empty())
+        .unwrap_or(false);
+    if !is_empty_array {
+        return false;
+    }
+    let placeholder = if is_chat {
+        json!({ "index": 0, "delta": {}, "finish_reason": null })
+    } else {
+        json!({ "index": 0, "text": "", "finish_reason": null })
+    };
+    value["choices"] = json!([placeholder]);
+    true
+}
+
 pub async fn process_streaming_response(
     app_state: Arc<AppState>,
     headers: HeaderMap,
@@ -491,10 +532,25 @@ pub async fn process_streaming_response(
                             }
                         }
 
+                        ensure_non_empty_choices(&mut value, is_chat);
+
                         let json_str = simd_json::to_string(&value).unwrap_or_default();
                         let _ = tx.send(json_str.clone());
                         stream::iter(vec![Ok(Event::default().data(json_str))])
                     } else {
+                        stream::iter(vec![Ok(Event::default().data(data_str))])
+                    }
+                } else if has_empty_choices_marker(&event.data) {
+                    // Fast path 例外：结尾 usage chunk 的空 choices 需补占位，
+                    // 否则严格取下标的下游客户端会越界崩溃。此分支才付出解析成本。
+                    let mut data_str = event.data;
+                    if let Ok(mut value) = unsafe { simd_json::from_str::<Value>(&mut data_str) } {
+                        ensure_non_empty_choices(&mut value, is_chat);
+                        let json_str = simd_json::to_string(&value).unwrap_or(data_str);
+                        let _ = tx.send(json_str.clone());
+                        stream::iter(vec![Ok(Event::default().data(json_str))])
+                    } else {
+                        let _ = tx.send(data_str.clone());
                         stream::iter(vec![Ok(Event::default().data(data_str))])
                     }
                 } else {
@@ -554,4 +610,52 @@ pub fn extract_error_msg(body: &Value) -> Option<String> {
     // 尝试直接把 body 转字符串（如果是简单的 {"error": ...}）
     // 或者如果不包含 error 字段，但 status 错了，就返回 body 的紧凑字符串
     Some(body.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_detects_empty_choices_variants() {
+        assert!(has_empty_choices_marker(r#"{"choices":[],"usage":{}}"#));
+        assert!(has_empty_choices_marker(r#"{"choices": [ ] }"#));
+        assert!(has_empty_choices_marker(r#"{"usage":{},"choices":[]}"#));
+    }
+
+    #[test]
+    fn marker_ignores_non_empty_and_absent_choices() {
+        assert!(!has_empty_choices_marker(
+            r#"{"choices":[{"index":0,"delta":{"content":"hi"}}]}"#
+        ));
+        assert!(!has_empty_choices_marker(r#"{"usage":{}}"#));
+        assert!(!has_empty_choices_marker(r#"{"choices":[{}],"note":"[]"}"#));
+    }
+
+    #[test]
+    fn chat_empty_choices_gets_placeholder() {
+        let mut v = json!({ "choices": [], "usage": { "total_tokens": 5 } });
+        assert!(ensure_non_empty_choices(&mut v, true));
+        assert_eq!(v["choices"][0]["index"], json!(0));
+        assert!(v["choices"][0]["delta"].is_object());
+        assert_eq!(v["usage"]["total_tokens"], json!(5));
+    }
+
+    #[test]
+    fn completion_empty_choices_gets_text_placeholder() {
+        let mut v = json!({ "choices": [] });
+        assert!(ensure_non_empty_choices(&mut v, false));
+        assert_eq!(v["choices"][0]["text"], json!(""));
+    }
+
+    #[test]
+    fn non_empty_or_absent_choices_untouched() {
+        let mut with = json!({ "choices": [{ "index": 0, "delta": {} }] });
+        assert!(!ensure_non_empty_choices(&mut with, true));
+        assert_eq!(with["choices"].as_array().unwrap().len(), 1);
+
+        let mut without = json!({ "usage": {} });
+        assert!(!ensure_non_empty_choices(&mut without, true));
+        assert!(without.get("choices").is_none());
+    }
 }
