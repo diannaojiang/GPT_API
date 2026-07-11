@@ -8,7 +8,7 @@ GPT_API 是 Rust 实现的高性能 OpenAI API 聚合网关与负载均衡器。
 
 ### 部署架构
 ```
-[Client] -> [Check_API] -> [GPT_API] -> [Backend Services]
+[Client] -> [GPT_API] -> [Backend Services]
 ```
 
 ---
@@ -114,16 +114,3 @@ curl --location 'http://192.168.10.121:8000/v1/chat/completions' \
 向 Markdown 测试报告添加详细信息：
 1. 在 `TEST_EXPECTATIONS` 字典中添加预期输出
 2. 在 `TEST_STEP_LOGIC` 字典中添加测试步骤
-
----
-
-## 数据流
-
-1. 客户端请求 → Check_API
-2. 认证检查：Check_API 检查 API Key 并调用外部认证服务
-3. 请求转发：Check_API 将认证通过的请求转发给 GPT_API
-4. 路由分发：GPT_API 根据配置和请求内容选择合适的上游服务
-5. 请求处理：GPT_API 将请求转发给选定的上游服务
-6. 响应处理：GPT_API 处理上游响应，记录日志
-7. Token 上报：Check_API 统计 Token 消耗并上报给认证服务
-8. 响应返回：最终响应返回给客户端
