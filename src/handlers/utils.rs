@@ -409,7 +409,7 @@ where
                     || err_msg.contains("connection closed")
                 {
                     let error_response = json!({
-                        "error": "客户端在请求体传输完成前断开了连接，请检查网络稳定性或增大客户端超时设置",
+                        "error": "Client disconnected before the request body was fully received. Please check network stability or increase the client-side timeout.",
                         "error_type": "client_disconnect"
                     });
                     let mut response =

@@ -19,6 +19,13 @@ impl ClientManager {
             .connect_timeout(std::time::Duration::from_secs(10))
             // 全局总超时：30分钟 (避免截断长流，但防止永久挂起)
             .timeout(std::time::Duration::from_secs(1800))
+            // 空闲连接淘汰须短于上游/中间设备的 keepalive 超时，避免复用已被对端静默关闭的陈旧连接
+            .pool_idle_timeout(std::time::Duration::from_secs(60))
+            .pool_max_idle_per_host(64)
+            // TCP keepalive 探测防止 NAT/LB 静默切断长连接
+            .tcp_keepalive(std::time::Duration::from_secs(30))
+            // 禁用 Nagle 算法，降低 SSE 流式小包延迟
+            .tcp_nodelay(true)
             .build()
             .expect("Failed to build reqwest client");
         ClientManager { client }
