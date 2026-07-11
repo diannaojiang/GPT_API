@@ -232,13 +232,12 @@ pub async fn process_responses_streaming_response(
             }
             Err(e) => {
                 error!("Error parsing SSE stream for responses: {}", e);
-                // 上游断流时下发显式 error 事件，而非硬切裸连接，让下游得到干净终止。
+                // Responses API 标准: type:"error" typed event 格式
                 let err_data = json!({
                     "type": "error",
-                    "error": {
-                        "type": "upstream_error",
-                        "message": format!("upstream stream interrupted: {}", e)
-                    }
+                    "code": "upstream_error",
+                    "message": format!("upstream stream interrupted: {}", e),
+                    "param": null
                 })
                 .to_string();
                 return Ok::<_, std::io::Error>(Event::default().event("error").data(err_data));

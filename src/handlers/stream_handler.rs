@@ -488,6 +488,7 @@ pub async fn process_streaming_response(
     // Fast path: when no thinking transform and no special prefix,
     // skip the simd-json parse→transform→reserialize round-trip entirely.
     let needs_json_roundtrip = apply_thinking || !special_prefix.is_empty();
+    let model_for_error = model_for_meta.clone();
 
     // 使用 eventsource-stream 进行鲁棒的 SSE 解析
     let sse_stream = stream.eventsource().flat_map(move |result| {
@@ -561,19 +562,26 @@ pub async fn process_streaming_response(
             }
             Err(e) => {
                 error!("Error parsing SSE stream: {}", e);
-                // 上游断流时不硬切裸连接，而是下发显式 error 事件 + [DONE]，让下游得到干净终止。
+                // OpenAI 标准: 以标准 chat.completion.chunk 格式下发错误，
+                // 顶层 error 字段 + choices 带 finish_reason:"error"，不再发 [DONE]。
                 let err_chunk = json!({
+                    "object": "chat.completion.chunk",
+                    "model": model_for_error,
                     "error": {
-                        "message": format!("upstream stream interrupted: {}", e),
-                        "type": "upstream_error"
-                    }
+                        "code": "upstream_error",
+                        "message": format!("upstream stream interrupted: {}", e)
+                    },
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "error"
+                    }]
                 });
                 let err_str = simd_json::to_string(&err_chunk).unwrap_or_else(|_| {
-                    "{\"error\":{\"message\":\"upstream stream interrupted\",\"type\":\"upstream_error\"}}".to_string()
+                    "{\"object\":\"chat.completion.chunk\",\"error\":{\"code\":\"upstream_error\",\"message\":\"upstream stream interrupted\"},\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"error\"}]}".to_string()
                 });
                 stream::iter(vec![
                     Ok(Event::default().data(err_str)),
-                    Ok(Event::default().data("[DONE]")),
                 ])
             }
         }

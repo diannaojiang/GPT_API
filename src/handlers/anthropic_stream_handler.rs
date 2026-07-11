@@ -371,11 +371,11 @@ pub async fn process_anthropic_streaming_response(
             }
             Err(e) => {
                 error!("Error parsing SSE stream for anthropic messages: {}", e);
-                // 上游断流时下发显式 error 事件，而非硬切裸连接，让下游得到干净终止。
+                // Anthropic Messages API 标准: event:error + {"type":"error","error":{"type":"api_error","message":"..."}}
                 let err_data = json!({
                     "type": "error",
                     "error": {
-                        "type": "upstream_error",
+                        "type": "api_error",
                         "message": format!("upstream stream interrupted: {}", e)
                     }
                 })
