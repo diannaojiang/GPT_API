@@ -45,15 +45,32 @@ pub fn get_api_key(
         .filter(|s| !s.is_empty())
 }
 
-/// 构建并发送 HTTP 请求到上游服务
+/// 陈旧连接被对端静默关闭时，reqwest 在发送阶段返回 connect/request 类错误；
+/// 此时上游尚未收到请求体，重建连接重试是幂等安全的。超时与响应体/解码错误不在此列。
+fn is_retryable_send_error(err: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    match err.downcast_ref::<reqwest::Error>() {
+        Some(e) => !e.is_timeout() && (e.is_connect() || e.is_request()),
+        None => false,
+    }
+}
+
+async fn send_json_once(
+    request_builder: reqwest::RequestBuilder,
+    is_streaming: bool,
+) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    if is_streaming {
+        timeout(Duration::from_secs(60), request_builder.send())
+            .await
+            .map_err(|_| "Upstream service timeout: No response received within 60 seconds")?
+            .map_err(Into::into)
+    } else {
+        request_builder.send().await.map_err(Into::into)
+    }
+}
+
+/// 构建并发送 HTTP 请求到上游服务，陈旧连接错误自动重建连接重试一次
 ///
-/// 该函数负责：
-/// 1. 复用 HTTP 客户端连接
-/// 2. 构造请求头（包括 API Key）
-/// 3. 发送 POST 请求
-///
-/// 对于流式请求，应用 60秒 TTFB 超时以快速失败
-/// 对于非流式请求，仅受 ClientManager 的 1800秒 全局超时限制
+/// 流式请求应用 60秒 TTFB 超时以快速失败；非流式仅受 ClientManager 的 1800秒 全局超时限制。
 pub async fn build_and_send_request(
     app_state: &Arc<AppState>,
     _client_config: &ClientConfig,
@@ -63,41 +80,23 @@ pub async fn build_and_send_request(
     is_streaming: bool,
     _endpoint: &str,
 ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    // 获取 HTTP 客户端 (复用)
     let client: Client = app_state.client_manager.get_client();
 
-    // 构造请求
-    let mut request_builder = client.post(url);
-
-    if let Some(key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
-    }
-
-    // Active requests is tracked at the HTTP response body layer so that streaming
-    // stays "active" for the lifetime of the SSE connection.
-
-    // 根据请求类型应用不同的超时策略
-    let response = if is_streaming {
-        // 流式请求：设置 60秒 的首字节/响应头超时 (TTFB)
-        timeout(
-            Duration::from_secs(60),
-            request_builder
-                .header("Content-Type", "application/json")
-                .json(request_body)
-                .send(),
-        )
-        .await
-        .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??
-    } else {
-        // 非流式请求：不设置额外超时，仅依赖 ClientManager 的 1800秒 全局超时
-        request_builder
-            .header("Content-Type", "application/json")
-            .json(request_body)
-            .send()
-            .await?
+    let build_request = || {
+        let mut rb = client.post(url).header("Content-Type", "application/json");
+        if let Some(key) = api_key {
+            rb = rb.header("Authorization", format!("Bearer {}", key));
+        }
+        rb.json(request_body)
     };
 
-    Ok(response)
+    match send_json_once(build_request(), is_streaming).await {
+        Ok(resp) => Ok(resp),
+        Err(e) if is_retryable_send_error(e.as_ref()) => {
+            send_json_once(build_request(), is_streaming).await
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub async fn build_and_send_request_multipart(
@@ -112,30 +111,13 @@ pub async fn build_and_send_request_multipart(
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let http_client = app_state.client_manager.get_client();
 
-    let mut request_builder = http_client.post(url);
+    let mut request_builder = http_client.post(url).multipart(form);
 
     if let Some(key) = api_key {
         request_builder = request_builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    // Active requests is tracked at the HTTP response body layer so that streaming
-    // stays "active" for the lifetime of the SSE connection.
-
-    // 根据请求类型应用不同的超时策略
-    let response = if is_streaming {
-        // 流式请求：设置 60秒 的首字节/响应头超时 (TTFB)
-        timeout(
-            Duration::from_secs(60),
-            request_builder.multipart(form).send(),
-        )
-        .await
-        .map_err(|_| "Upstream service timeout: No response received within 60 seconds")??
-    } else {
-        // 非流式请求：不设置额外超时，仅依赖 ClientManager 的 1800秒 全局超时
-        request_builder.multipart(form).send().await?
-    };
-
-    Ok(response)
+    send_json_once(request_builder, is_streaming).await
 }
 
 #[cfg(test)]
