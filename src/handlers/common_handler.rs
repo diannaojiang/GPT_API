@@ -54,10 +54,7 @@ fn is_empty_value(v: &Value) -> bool {
 
 // Helper to create validation error response with logging metadata
 fn create_validation_error(msg: &str, payload: &RequestPayload) -> Response {
-    let error_response = json!({
-        "error": msg,
-        "error_type": "Input Validation Error"
-    });
+    let error_response = crate::app_error::build_error_body(msg, "Input Validation Error");
 
     let mut response = (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
 

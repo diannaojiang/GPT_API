@@ -4,8 +4,23 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fmt;
+
+/// 构建统一的双格式错误体：
+/// - 嵌套 `error` 对象（`message`/`type`/`param`/`code`）对齐 OpenAI SDK 契约
+/// - 顶层 `error_type` 保留，兼容读取该字段的旧客户端
+pub fn build_error_body(message: &str, error_type: &str) -> Value {
+    json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "param": null,
+            "code": null,
+        },
+        "error_type": error_type,
+    })
+}
 
 #[derive(Debug)]
 pub enum AppError {
@@ -91,10 +106,7 @@ impl IntoResponse for AppError {
             AppError::ApiError(status, message, error_type) => (status, message, error_type),
         };
 
-        let body = Json(json!({
-            "error": error_message,
-            "error_type": error_type
-        }));
+        let body = Json(build_error_body(&error_message, &error_type));
 
         let mut response = (status, body).into_response();
 

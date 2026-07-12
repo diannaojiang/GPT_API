@@ -118,10 +118,8 @@ impl DispatcherService {
                     // 这样可以确保客户端收到的错误信息与服务端日志一致
                     if response.status().is_server_error() {
                         if let Some(msg) = error_msg_opt {
-                            let new_body = serde_json::json!({
-                                "error": msg,
-                                "error_type": "internal_error"
-                            });
+                            let new_body =
+                                crate::app_error::build_error_body(&msg, "internal_error");
                             let mut new_response =
                                 (response.status(), axum::Json(new_body)).into_response();
                             // 必须保留原来的 extension (Meta)，否则日志就丢了

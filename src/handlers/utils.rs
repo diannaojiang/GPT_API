@@ -408,10 +408,10 @@ where
                     || err_msg.contains("closed connection")
                     || err_msg.contains("connection closed")
                 {
-                    let error_response = json!({
-                        "error": "Client disconnected before the request body was fully received. Please check network stability or increase the client-side timeout.",
-                        "error_type": "client_disconnect"
-                    });
+                    let error_response = crate::app_error::build_error_body(
+                        "Client disconnected before the request body was fully received. Please check network stability or increase the client-side timeout.",
+                        "client_disconnect",
+                    );
                     let mut response =
                         (StatusCode::BAD_REQUEST, Json(error_response)).into_response();
                     response.extensions_mut().insert(AccessLogMeta {
@@ -441,10 +441,8 @@ where
                 // 统一错误消息
                 let final_error_msg = format!("Request body validation failed: {}", error_message);
 
-                let error_response = json!({
-                    "error": final_error_msg,
-                    "error_type": "InvalidRequest"
-                });
+                let error_response =
+                    crate::app_error::build_error_body(&final_error_msg, "InvalidRequest");
 
                 let mut response =
                     (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
