@@ -103,7 +103,7 @@ docker run -d \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/timemobius/queqiao-router:latest
+  ghcr.io/timemobius/queqiao-router:b439
 ```
 
 ---
