@@ -1,7 +1,9 @@
 [package]
-name = "gpt_api"
+name = "queqiao-router"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "QueQiao-Router: 高性能大模型智能路由网关 | A high-performance LLM smart routing gateway"
 
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
