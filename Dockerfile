@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 从 builder 阶段复制二进制文件
-COPY --from=builder /usr/src/app/target/release/gpt_api ./gpt_api
+COPY --from=builder /usr/src/app/target/release/queqiao_router ./queqiao_router
 
 # 复制配置目录（如果运行时需要）
 # 注意：Config map 可能会在部署时挂载，但这里提供默认结构
@@ -46,4 +46,4 @@ ENV RECD_PATH="sqlite:./logs/record.db"
 EXPOSE 8000
 
 # 启动命令
-CMD ["./gpt_api"]
+CMD ["./queqiao_router"]
