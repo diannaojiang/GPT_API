@@ -4,7 +4,6 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
-use crate::client::proxy::get_api_key;
 use crate::config::types::{ClientConfig, ModelMatch};
 use crate::state::app_state::AppState;
 
@@ -61,14 +60,28 @@ pub async fn list_models(
     // 创建一个任务列表来并发获取所有客户端的模型
     let mut tasks = Vec::new();
 
-    // 为每个客户端创建一个异步任务
+    // 从请求头提取 API key（仅从 header 取，不用 config 中的 api_key）
+    let api_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.replace("Bearer ", "").trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+        });
+
+    // 为每个客户端创建一个异步任务，所有客户端共用同一个 key
     for client_config in &config.openai_clients {
         let client_config_clone = client_config.clone();
         let http_client_clone = http_client.clone();
-        let api_key = get_api_key(client_config, &headers);
+        let api_key_clone = api_key.clone();
 
         let task = tokio::spawn(async move {
-            fetch_models_from_client(&client_config_clone, &http_client_clone, &api_key).await
+            fetch_models_from_client(&client_config_clone, &http_client_clone, &api_key_clone).await
         });
 
         tasks.push(task);
