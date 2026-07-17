@@ -1,4 +1,4 @@
-// lib.rs
+// QueQiao-Router: 高性能大模型智能路由网关
 pub mod app_error;
 pub mod client;
 pub mod config;

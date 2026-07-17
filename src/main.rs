@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-use gpt_api::{client, config, db, middleware, routes, state};
+use queqiao_router::{client, config, db, middleware, routes, state};
 
 use client::client_manager::ClientManager;
 use db::{check_and_rotate, init_db_pool};
@@ -38,8 +38,8 @@ fn main() {
     runtime.block_on(async {
         // Initialize tracing
         // 配置自定义的日志系统 (File + Console)
-        let log_config = gpt_api::logging::LogConfig::default();
-        let _guards = gpt_api::logging::init_logging(log_config);
+        let log_config = queqiao_router::logging::LogConfig::default();
+        let _guards = queqiao_router::logging::init_logging(log_config);
         println!("Logging system initialized.");
 
         // Load configuration
@@ -66,7 +66,7 @@ fn main() {
         // ============================================================================
         // 启动独立 Metrics Worker 线程
         // ============================================================================
-        use gpt_api::metrics::{middleware as metrics_middleware, worker};
+        use queqiao_router::metrics::{middleware as metrics_middleware, worker};
 
         let (metrics_sender, metrics_receiver) = worker::create_metrics_channel();
         metrics_middleware::set_metrics_sender(metrics_sender.clone());
