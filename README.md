@@ -1,10 +1,12 @@
-# GPT_API (Rust Edition)
+# QueQiao-Router (鹊桥路由)
 
-[![Release](https://img.shields.io/github/v/release/diannaojiang/GPT_API)](https://github.com/diannaojiang/GPT_API/releases) [![CI/CD](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml/badge.svg)](https://github.com/diannaojiang/GPT_API/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/TimeMobius/queqiao-router)](https://github.com/TimeMobius/queqiao-router/releases) [![CI/CD](https://github.com/TimeMobius/queqiao-router/actions/workflows/ci.yml/badge.svg)](https://github.com/TimeMobius/queqiao-router/actions/workflows/ci.yml)
 
-**高性能、生产级 LLM API 聚合网关与负载均衡器。**
+**高性能大模型智能路由网关。**
 
-GPT_API 是一个基于 Rust 重构的高性能反向代理服务。它允许你统一管理多个 LLM 后端（如 OpenAI, Azure, Anthropic, DeepSeek, vLLM, Llama.cpp 等），并通过标准的 OpenAI 兼容接口以及 **Anthropic Messages API** 对外提供服务。
+QueQiao-Router 是一个基于 Rust 的高性能反向代理服务，灵感源自"鹊桥相会"的传说——如同喜鹊搭桥连接银河两岸，QueQiao-Router 搭建起客户端与大模型之间的桥梁，让请求精准跨越网络的鸿沟。
+
+它允许你统一管理多个 LLM 后端（如 OpenAI, Azure, Anthropic, DeepSeek, vLLM, Llama.cpp 等），并通过标准的 OpenAI 兼容接口以及 **Anthropic Messages API** 对外提供服务。
 
 本项目专为**高并发**与**高可靠性**设计，利用 Rust 的零成本抽象和 SIMD 指令集优化，在极低的资源占用下提供毫秒级的路由延迟，并实现了业内领先的**流式响应全量审计**功能。
 
@@ -94,16 +96,14 @@ check_config:
 
 ### 2. 启动服务
 
-建议使用针对 x86-64-v3 (AVX2) 优化的镜像标签：
-
 ```bash
 docker run -d \
-  --name openai-api \
+  --name queqiao-router \
   -p 8000:8000 \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   --restart always \
-  ghcr.io/diannaojiang/openai-api:b437
+  ghcr.io/timemobius/queqiao-router:latest
 ```
 
 ---
@@ -232,3 +232,7 @@ RUSTFLAGS="-C target-cpu=native" cargo build --release
 - **连接池**: reqwest 客户端已内置 TCP keepalive（30s）、空闲连接存活（5min）、每 host 最大空闲连接数（64），无需额外配置。
 
 ---
+
+## 📜 许可证
+
+本项目基于 Apache License 2.0 协议开源。

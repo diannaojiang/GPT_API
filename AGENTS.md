@@ -1,21 +1,21 @@
-# GPT_API 项目指南
+# QueQiao-Router 项目指南
 
-本文档是 GPT_API 项目的持久化记忆，整合了项目架构、开发规范和测试流程。
+本文档是 QueQiao-Router 项目的持久化记忆，整合了项目架构、开发规范和测试流程。
 
 ## 项目概述
 
-GPT_API 是 Rust 实现的高性能 OpenAI API 聚合网关与负载均衡器。
+QueQiao-Router 是 Rust 实现的高性能大模型智能路由网关。
 
 ### 部署架构
 ```
-[Client] -> [GPT_API] -> [Backend Services]
+[Client] -> [QueQiao-Router] -> [Backend Services]
 ```
 
 ---
 
 ## 开发指令与约束
 
-> **铁律**: 严禁修改 GPT_API_TESTS 测试套件的任何代码。测试套件是项目质量的守护者，其代码不可更改。
+> **铁律**: 严禁修改 QueQiao-Router-Tests 测试套件的任何代码。测试套件是项目质量的守护者，其代码不可更改。
 
 1. **自主性**: 遇到问题时，优先通过在线搜索等方式独立解决，避免中断等待用户指令
 2. **范围限制**: 所有代码修改严格限制在当前指令目标的项目内
@@ -44,14 +44,14 @@ GPT_API 是 Rust 实现的高性能 OpenAI API 聚合网关与负载均衡器。
 
 ### 编译命令 (Debug 模式)
 ```bash
-cd /mnt/data/Codes/GPT_API_gemini/GPT_API && cargo build
+cd /mnt/data/Codes/GPT_API_gemini/QueQiao-Router && cargo build
 ```
 
 ---
 
 ## 测试套件
 
-测试套件目录: `/mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS`
+测试套件目录: `/mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests`
 
 ### 环境设置
 ```bash
@@ -59,25 +59,25 @@ cd /mnt/data/Codes/GPT_API_gemini/GPT_API && cargo build
 apt-get update && apt-get install -y python3-pip python3.11-venv
 
 # 创建虚拟环境
-python3 -m venv /mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS/.venv
+python3 -m venv /mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests/.venv
 
 # 安装 Python 依赖
-/mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS/.venv/bin/python3 -m pip install -r /mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS/requirements.txt
+/mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests/.venv/bin/python3 -m pip install -r /mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests/requirements.txt
 ```
 
 ### 测试运行
-**重要**: 运行测试套件前，必须先清理可能遗留的 GPT_API 进程，避免端口冲突导致测试失败。
+**重要**: 运行测试套件前，必须先清理可能遗留的 `queqiao_router` 进程，避免端口冲突导致测试失败。
 
 ```bash
 # 清理遗留进程
-pkill -f gpt_api || true
+pkill -f queqiao_router || true
 
 # 运行测试
-cd /mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS && source .venv/bin/activate && python test_runner_enhanced.py
+cd /mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests && source .venv/bin/activate && python test_runner_enhanced.py --api-version rust --stage all
 ```
 
 ### 测试报告
-测试报告生成位置: `/mnt/data/Codes/GPT_API_gemini/GPT_API_TESTS/test_report.md`
+测试报告生成位置: `/mnt/data/Codes/GPT_API_gemini/QueQiao-Router-Tests/test_report.md`
 
 ---
 

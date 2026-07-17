@@ -1,8 +1,8 @@
-# GPT_API 开发者指南
+# QueQiao-Router 开发者指南
 
 ## 1. 架构深度解析
 
-GPT_API 采用基于 Tokio 的全异步、无锁分层架构设计，旨在实现极致的吞吐量和低延迟。
+QueQiao-Router 采用基于 Tokio 的全异步、无锁分层架构设计，旨在实现极致的吞吐量和低延迟。
 
 ### 1.1 核心组件交互
 
@@ -60,7 +60,7 @@ Request -> [Axum Router]
 
 ## 3. 测试与验证
 
-我们提供了一个增强型的测试运行器 `GPT_API_TESTS/test_runner_enhanced.py`，它集成了 Mock Server、数据库验证和性能基准测试。
+我们提供了一个增强型的测试运行器 `../QueQiao-Router-Tests/test_runner_enhanced.py`，它集成了 Mock Server、数据库验证和性能基准测试。
 
 ### 运行测试
 
@@ -68,14 +68,14 @@ Request -> [Axum Router]
 
 ```bash
 # 1. 激活环境
-source GPT_API_TESTS/.venv/bin/activate
+source ../QueQiao-Router-Tests/.venv/bin/activate
 
 # 2. 运行全量测试 (推荐)
-python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage all
+python ../QueQiao-Router-Tests/test_runner_enhanced.py --api-version rust --stage all
 
 # 3. 仅运行特定阶段
-python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage phase1 # 基础功能
-python GPT_API_TESTS/test_runner_enhanced.py --api-version rust --stage phase4 # 性能压测
+python ../QueQiao-Router-Tests/test_runner_enhanced.py --api-version rust --stage phase1 # 基础功能
+python ../QueQiao-Router-Tests/test_runner_enhanced.py --api-version rust --stage phase4 # 性能压测
 ```
 
 ### 测试阶段说明
