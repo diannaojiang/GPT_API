@@ -34,8 +34,8 @@ jobs:
       - name: Update README.md with new version
         run: |
           # 使用 sed 命令查找并替换镜像版本号
-          # 这个命令会查找 ghcr.io/your-user/openai-api: 这一行，并把冒号后面的所有内容替换为新的版本号
-          sed -i "s|\(ghcr.io/${{ env.OWNER_LC }}/openai-api:\).*|\1${{ steps.version.outputs.tag }}|g" README.md
+          # 这个命令会查找 ghcr.io/your-user/queqiao-router: 这一行，并把冒号后面的所有内容替换为新的版本号
+          sed -i "s|\(ghcr.io/${{ env.OWNER_LC }}/queqiao-router:\).*|\1${{ steps.version.outputs.tag }}|g" README.md
 
       # --- 新增步骤：提交并推送 README.md 的改动 ---
       - name: Commit and push README.md

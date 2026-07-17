@@ -87,7 +87,7 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/${{ env.OWNER_LC }}/openai-api,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/${{ env.OWNER_LC }}/queqiao-router,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
@@ -145,10 +145,10 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t ghcr.io/${{ env.OWNER_LC }}/openai-api:b${{ env.COUNT }} \
-            -t ghcr.io/${{ env.OWNER_LC }}/openai-api:latest \
-            $(printf 'ghcr.io/${{ env.OWNER_LC }}/openai-api@sha256:%s ' *)
+          docker buildx imagetools create -t ghcr.io/${{ env.OWNER_LC }}/queqiao-router:b${{ env.COUNT }} \
+            -t ghcr.io/${{ env.OWNER_LC }}/queqiao-router:latest \
+            $(printf 'ghcr.io/${{ env.OWNER_LC }}/queqiao-router@sha256:%s ' *)
       
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ env.OWNER_LC }}/openai-api:latest
+          docker buildx imagetools inspect ghcr.io/${{ env.OWNER_LC }}/queqiao-router:latest
