@@ -29,7 +29,7 @@ impl DispatcherService {
 
     fn should_retry_on_client_error(resp: &Response) -> bool {
         let status = resp.status();
-        status.as_u16() == 404 || status.as_u16() == 422
+        status.as_u16() == 403 || status.as_u16() == 404 || status.as_u16() == 422
     }
 
     /// 解析给定模型名称对应的客户端列表，并应用负载均衡
