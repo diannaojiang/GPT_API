@@ -33,7 +33,7 @@ impl DispatcherService {
 
     fn should_retry_on_client_error(resp: &Response) -> bool {
         let status = resp.status();
-        status.as_u16() == 403 || status.as_u16() == 404 || status.as_u16() == 422
+        matches!(status.as_u16(), 403 | 404 | 422 | 429)
     }
 
     /// 解析给定模型名称对应的客户端列表，并应用负载均衡
@@ -102,9 +102,13 @@ impl DispatcherService {
                 Err(e) => return e.into_response(),
             };
 
-            let execution_result = self
-                .execute_client_chain(&clients, &current_model, cb.clone(), &mut all_tried_clients)
-                .await;
+            let execution_result = Self::execute_client_chain(
+                &clients,
+                &current_model,
+                cb.clone(),
+                &mut all_tried_clients,
+            )
+            .await;
             // ... (后面保持不变)
             match execution_result {
                 // 成功获得响应（包括 4xx 客户端错误，这些被视为业务成功处理）
@@ -174,7 +178,6 @@ impl DispatcherService {
     }
 
     async fn execute_client_chain<F, Fut>(
-        &self,
         clients: &[ClientConfig],
         model_name: &str,
         request_callback: Arc<Mutex<F>>,
@@ -290,15 +293,22 @@ impl DispatcherService {
                         return Ok(resp);
                     }
                     if status.is_client_error() {
-                        if resp.extensions().get::<AccessLogMeta>().is_none() {
-                            resp.extensions_mut().insert(AccessLogMeta {
-                                model: model_name.to_string(),
-                                backend: fallback_clients[idx].name.clone(),
-                                error: Some(format!("Upstream client error: {}", status)),
-                                request_body: None,
-                            });
+                        if !Self::should_retry_on_client_error(&resp) {
+                            if resp.extensions().get::<AccessLogMeta>().is_none() {
+                                resp.extensions_mut().insert(AccessLogMeta {
+                                    model: model_name.to_string(),
+                                    backend: fallback_clients[idx].name.clone(),
+                                    error: Some(format!("Upstream client error: {}", status)),
+                                    request_body: None,
+                                });
+                            }
+                            return Ok(resp);
                         }
-                        return Ok(resp);
+
+                        warn!(
+                            "Fallback client {} returned retryable error {}. Continuing fallback chain...",
+                            fallback_clients[idx].name, status
+                        );
                     }
                     last_response = Some(resp);
                 }
@@ -343,6 +353,7 @@ impl DispatcherService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
 
     fn client_with_fallback(fallback: Option<&str>) -> ClientConfig {
         ClientConfig {
@@ -370,5 +381,77 @@ mod tests {
         let clients = vec![client_with_fallback(None), client_with_fallback(None)];
 
         assert_eq!(select_fallback_model(&clients), None);
+    }
+
+    #[test]
+    fn retries_forbidden_and_too_many_requests_responses() {
+        let forbidden = (StatusCode::FORBIDDEN, ()).into_response();
+        let too_many_requests = (StatusCode::TOO_MANY_REQUESTS, ()).into_response();
+
+        assert!(DispatcherService::should_retry_on_client_error(&forbidden));
+        assert!(DispatcherService::should_retry_on_client_error(
+            &too_many_requests
+        ));
+    }
+
+    fn fallback_clients() -> Vec<ClientConfig> {
+        vec![
+            ClientConfig {
+                name: "minimax3_remote2".to_string(),
+                fallback: Some("DeepSeek-V4-Pro".to_string()),
+                ..ClientConfig::default()
+            },
+            ClientConfig {
+                name: "minimax3_remote1".to_string(),
+                fallback: Some("DeepSeek-V4-Pro".to_string()),
+                ..ClientConfig::default()
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn continues_to_model_fallback_after_forbidden_from_all_clients() {
+        let clients = fallback_clients();
+        let request_callback = |_: &ClientConfig, _: &str| async {
+            Ok::<Response, AppError>((StatusCode::FORBIDDEN, ()).into_response())
+        };
+        let mut tried_clients = Vec::new();
+
+        let result = DispatcherService::execute_client_chain(
+            &clients,
+            "MiniMax-M3",
+            Arc::new(Mutex::new(request_callback)),
+            &mut tried_clients,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(Some(fallback_model)) if fallback_model == "DeepSeek-V4-Pro"
+        ));
+        assert_eq!(tried_clients.len(), clients.len());
+    }
+
+    #[tokio::test]
+    async fn continues_to_model_fallback_after_too_many_requests_from_all_clients() {
+        let clients = fallback_clients();
+        let request_callback = |_: &ClientConfig, _: &str| async {
+            Ok::<Response, AppError>((StatusCode::TOO_MANY_REQUESTS, ()).into_response())
+        };
+        let mut tried_clients = Vec::new();
+
+        let result = DispatcherService::execute_client_chain(
+            &clients,
+            "MiniMax-M3",
+            Arc::new(Mutex::new(request_callback)),
+            &mut tried_clients,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(Some(fallback_model)) if fallback_model == "DeepSeek-V4-Pro"
+        ));
+        assert_eq!(tried_clients.len(), clients.len());
     }
 }
