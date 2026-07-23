@@ -1,6 +1,7 @@
 use crate::client::client_manager::ClientManager;
 use crate::config::config_manager::ConfigManager;
 use crate::services::dispatcher::DispatcherService;
+use crate::services::models_cache::ModelsCache;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -11,6 +12,7 @@ pub struct AppState {
     pub dispatcher_service: DispatcherService,
     pub db_pool: RwLock<SqlitePool>,
     pub db_rotation_lock: Mutex<()>,
+    pub models_cache: ModelsCache,
 }
 
 impl AppState {
@@ -27,6 +29,7 @@ impl AppState {
             dispatcher_service,
             db_pool: RwLock::new(db_pool),
             db_rotation_lock: Mutex::new(()),
+            models_cache: ModelsCache::new(),
         }
     }
 }

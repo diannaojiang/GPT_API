@@ -18,7 +18,8 @@ pub struct ConfigManager {
 impl ConfigManager {
     /// 创建新的 ConfigManager 并开始监听配置文件变化
     pub async fn new(config_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let config = Self::load_config(config_path)?;
+        let mut config = Self::load_config(config_path)?;
+        config.config_generation = 1;
         let config_arc = Arc::new(RwLock::new(config));
 
         // Initialize watching immediately to get the watcher instance
@@ -71,6 +72,14 @@ impl ConfigManager {
         self.config.read().await
     }
 
+    /// Return a consistent snapshot of (Config, config_generation) for use by the cache.
+    /// The generation is read atomically with the config contents so they always match.
+    pub async fn get_config_with_generation(&self) -> (Config, u64) {
+        let guard = self.config.read().await;
+        let gen = guard.config_generation;
+        (guard.clone(), gen)
+    }
+
     async fn setup_watcher(
         config_path_str: &str,
         config: Arc<RwLock<Config>>,
@@ -101,8 +110,16 @@ impl ConfigManager {
                                 let config_clone = config.clone();
                                 // Use the captured handle to spawn the async task
                                 runtime_handle.spawn(async move {
-                                    *config_clone.write().await = new_config;
-                                    info!("Config reloaded successfully.");
+                                    let mut guard = config_clone.write().await;
+                                    // Increment generation atomically with the config swap
+                                    let next_gen = guard.config_generation.wrapping_add(1);
+                                    let mut fresh = new_config;
+                                    fresh.config_generation = next_gen;
+                                    *guard = fresh;
+                                    info!(
+                                        "Config reloaded successfully (generation {}).",
+                                        next_gen
+                                    );
                                 });
                             }
                             Err(e) => {

@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
 use crate::config::types::{ClientConfig, ModelMatch};
+use crate::services::models_cache::{CacheKey, CacheOutcome, ModelsCache};
 use crate::state::app_state::AppState;
 
 fn model_matches_filter(model_id: &str, model_match: &ModelMatch) -> bool {
@@ -18,7 +19,6 @@ fn model_matches_filter(model_id: &str, model_match: &ModelMatch) -> bool {
     }
 }
 
-/// 从单个客户端获取模型列表
 async fn fetch_models_from_client(
     client_config: &ClientConfig,
     http_client: &Client,
@@ -44,38 +44,16 @@ async fn fetch_models_from_client(
     }
 }
 
-/// 获取所有模型的列表
-pub async fn list_models(
-    State(app_state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<Value> {
-    // 获取当前配置
-    let config = app_state.config_manager.get_config().await;
-
-    let http_client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .expect("Failed to build HTTP client");
-
-    // 创建一个任务列表来并发获取所有客户端的模型
+/// Aggregate, filter, and deduplicate models across every configured client.
+/// Mirrors the original implementation verbatim so the external JSON contract
+/// (`{"object":"list","data":[...]}`) is unchanged.
+async fn aggregate_models(
+    openai_clients: &[ClientConfig],
+    http_client: &Client,
+    api_key: Option<String>,
+) -> Value {
     let mut tasks = Vec::new();
-
-    // 从请求头提取 API key（仅从 header 取，不用 config 中的 api_key）
-    let api_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.replace("Bearer ", "").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-api-key")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty())
-        });
-
-    // 为每个客户端创建一个异步任务，所有客户端共用同一个 key
-    for client_config in &config.openai_clients {
+    for client_config in openai_clients {
         let client_config_clone = client_config.clone();
         let http_client_clone = http_client.clone();
         let api_key_clone = api_key.clone();
@@ -83,17 +61,12 @@ pub async fn list_models(
         let task = tokio::spawn(async move {
             fetch_models_from_client(&client_config_clone, &http_client_clone, &api_key_clone).await
         });
-
         tasks.push(task);
     }
-
-    // 等待所有任务完成
     let results = join_all(tasks).await;
 
-    // 收集所有成功的响应
     let mut all_models = Vec::new();
-
-    for (result, client_config) in results.iter().zip(config.openai_clients.iter()) {
+    for (result, client_config) in results.iter().zip(openai_clients.iter()) {
         if let Ok(Some(models)) = result {
             if let Some(data) = models.get("data").and_then(|d| d.as_array()) {
                 for model in data {
@@ -111,10 +84,8 @@ pub async fn list_models(
         }
     }
 
-    // 去重：根据模型ID去重
     let mut unique_models = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
-
     for model in all_models {
         if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
             if !seen_ids.contains(id) {
@@ -122,13 +93,100 @@ pub async fn list_models(
                 unique_models.push(model);
             }
         } else {
-            // 如果没有ID字段，直接添加
             unique_models.push(model);
         }
     }
 
-    Json(json!({
+    json!({
         "object": "list",
         "data": unique_models
-    }))
+    })
+}
+
+fn extract_credential_bytes(headers: &HeaderMap) -> Option<Vec<u8>> {
+    if let Some(value) = headers.get("authorization") {
+        if let Ok(s) = value.to_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                let body = trimmed
+                    .strip_prefix("Bearer ")
+                    .or_else(|| trimmed.strip_prefix("bearer "))
+                    .unwrap_or(trimmed);
+                let body = body.trim();
+                if !body.is_empty() {
+                    return Some(body.as_bytes().to_vec());
+                }
+            }
+        }
+    }
+    if let Some(value) = headers.get("x-api-key") {
+        if let Ok(s) = value.to_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.as_bytes().to_vec());
+            }
+        }
+    }
+    None
+}
+
+fn make_key(cache: &ModelsCache, generation: u64, credential: Option<&[u8]>) -> CacheKey {
+    CacheKey {
+        generation,
+        credential: cache.fingerprint(credential),
+    }
+}
+
+pub async fn list_models(
+    State(app_state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    let (config, generation) = app_state.config_manager.get_config_with_generation().await;
+    let ttl_seconds = config.models_cache.ttl_seconds;
+    let credential_bytes = extract_credential_bytes(&headers);
+
+    if ttl_seconds == 0 {
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("Failed to build HTTP client");
+        let key_str = credential_bytes.and_then(|b| String::from_utf8(b).ok());
+        return Json(aggregate_models(&config.openai_clients, &http_client, key_str).await);
+    }
+
+    let key = make_key(
+        &app_state.models_cache,
+        generation,
+        credential_bytes.as_deref(),
+    );
+    match app_state.models_cache.lookup(key) {
+        CacheOutcome::Fresh(value) => return Json(value),
+        CacheOutcome::Empty => {}
+    }
+
+    let (is_leader, inflight) = app_state.models_cache.begin_refresh(key);
+    if !is_leader {
+        app_state.models_cache.wait_for_leader(key, &inflight).await;
+        match app_state.models_cache.lookup(key) {
+            CacheOutcome::Fresh(value) => return Json(value),
+            CacheOutcome::Empty => {
+                if let Some(previous) = app_state.models_cache.previous_value(key) {
+                    return Json(previous);
+                }
+            }
+        }
+    }
+
+    let http_client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("Failed to build HTTP client");
+    let key_str = credential_bytes.and_then(|b| String::from_utf8(b).ok());
+    let aggregated = aggregate_models(&config.openai_clients, &http_client, key_str).await;
+
+    app_state
+        .models_cache
+        .insert(key, aggregated.clone(), Duration::from_secs(ttl_seconds));
+    app_state.models_cache.end_refresh(key, &inflight);
+    Json(aggregated)
 }

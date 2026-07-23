@@ -75,6 +75,29 @@ pub struct ModelMatch {
     pub value: Vec<String>,
 }
 
+/// Cache configuration for the /v1/models endpoint.
+///
+/// Default TTL is 600 seconds. Set `ttl_seconds: 0` to disable caching entirely.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ModelsCacheConfig {
+    /// Time-to-live in seconds for cached model lists (default: 600).
+    /// A value of 0 disables both cache reads and writes.
+    #[serde(default = "default_models_cache_ttl")]
+    pub ttl_seconds: u64,
+}
+
+const fn default_models_cache_ttl() -> u64 {
+    600
+}
+
+impl Default for ModelsCacheConfig {
+    fn default() -> Self {
+        Self {
+            ttl_seconds: default_models_cache_ttl(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub openai_clients: Vec<ClientConfig>,
@@ -82,6 +105,14 @@ pub struct Config {
     pub load_balancing: LoadBalancingConfig,
     #[serde(default)]
     pub thinking_format: Option<ThinkingFormat>,
+    /// Cache configuration for the /v1/models endpoint.
+    /// Set ttl_seconds to 0 to disable caching.
+    #[serde(default)]
+    pub models_cache: ModelsCacheConfig,
+    /// Internal generation counter, incremented on each successful hot reload.
+    /// Skipped during serialization/deserialization; initialized to 1 by ConfigManager.
+    #[serde(skip)]
+    pub config_generation: u64,
 }
 
 impl Default for LoadBalancingConfig {
@@ -157,7 +188,40 @@ mod tests {
             openai_clients: vec![],
             load_balancing: LoadBalancingConfig::default(),
             thinking_format: global_format,
+            models_cache: ModelsCacheConfig::default(),
+            config_generation: 1,
         }
+    }
+
+    #[test]
+    fn test_models_cache_default_is_600_seconds() {
+        let yaml = r#"
+openai_clients: []
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(cfg.models_cache.ttl_seconds, 600);
+    }
+
+    #[test]
+    fn test_models_cache_explicit_zero_disables() {
+        let yaml = r#"
+openai_clients: []
+models_cache:
+  ttl_seconds: 0
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(cfg.models_cache.ttl_seconds, 0);
+    }
+
+    #[test]
+    fn test_models_cache_custom_value() {
+        let yaml = r#"
+openai_clients: []
+models_cache:
+  ttl_seconds: 42
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(cfg.models_cache.ttl_seconds, 42);
     }
 
     #[test]
