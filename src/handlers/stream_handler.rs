@@ -20,7 +20,7 @@ use axum::{
     },
     Json,
 };
-use eventsource_stream::Eventsource;
+use eventsource_stream::{Event as UpstreamEvent, Eventsource};
 use futures::stream::{self, StreamExt};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -512,6 +512,10 @@ pub async fn process_streaming_response(
                     return stream::iter(vec![Ok(Event::default().data("[DONE]"))]);
                 }
 
+                if is_chat && is_chat_completion_ping(&event) {
+                    return stream::iter(vec![Ok(Event::default().comment("keepalive"))]);
+                }
+
                 if needs_json_roundtrip {
                     // 需要转换：解析 JSON → 注入前缀 / thinking 转换 → 重序列化
                     let mut data_str = event.data;
@@ -620,6 +624,20 @@ pub fn extract_error_msg(body: &Value) -> Option<String> {
     Some(body.to_string())
 }
 
+fn is_chat_completion_ping(event: &UpstreamEvent) -> bool {
+    if event.event == "ping" {
+        return true;
+    }
+
+    if !event.data.contains("\"type\"") {
+        return false;
+    }
+
+    serde_json::from_str::<Value>(&event.data)
+        .ok()
+        .is_some_and(|value| value.get("type").and_then(Value::as_str) == Some("ping"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,5 +683,42 @@ mod tests {
         let mut without = json!({ "usage": {} });
         assert!(!ensure_non_empty_choices(&mut without, true));
         assert!(without.get("choices").is_none());
+    }
+
+    #[test]
+    fn chat_ping_event_is_detected() {
+        let event = UpstreamEvent {
+            event: "ping".to_string(),
+            data: "{}".to_string(),
+            ..Default::default()
+        };
+
+        assert!(is_chat_completion_ping(&event));
+    }
+
+    #[test]
+    fn chat_ping_payload_is_detected() {
+        let event = UpstreamEvent {
+            data: r#"{"type":"ping"}"#.to_string(),
+            ..Default::default()
+        };
+
+        assert!(is_chat_completion_ping(&event));
+    }
+
+    #[test]
+    fn normal_choices_and_error_events_are_not_detected_as_ping() {
+        let choices = UpstreamEvent {
+            data: r#"{"choices":[{"delta":{"content":"hi"}}]}"#.to_string(),
+            ..Default::default()
+        };
+        let error = UpstreamEvent {
+            event: "error".to_string(),
+            data: r#"{"error":{"message":"upstream"}}"#.to_string(),
+            ..Default::default()
+        };
+
+        assert!(!is_chat_completion_ping(&choices));
+        assert!(!is_chat_completion_ping(&error));
     }
 }

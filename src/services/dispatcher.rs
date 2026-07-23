@@ -19,6 +19,10 @@ pub struct DispatcherService {
     client_manager: Arc<ClientManager>,
 }
 
+fn select_fallback_model(clients: &[ClientConfig]) -> Option<String> {
+    clients.iter().find_map(|client| client.fallback.clone())
+}
+
 impl DispatcherService {
     pub fn new(config_manager: Arc<ConfigManager>, client_manager: Arc<ClientManager>) -> Self {
         Self {
@@ -232,8 +236,8 @@ impl DispatcherService {
 
         let fallback_clients = &clients[1..];
         if fallback_clients.is_empty() {
-            if let Some(fallback_model) = &primary_client.fallback {
-                return Err(Some(fallback_model.clone()));
+            if let Some(fallback_model) = select_fallback_model(clients) {
+                return Err(Some(fallback_model));
             }
             return Err(None);
         }
@@ -328,10 +332,43 @@ impl DispatcherService {
             }
         }
 
-        if let Some(fallback_model) = &primary_client.fallback {
-            return Err(Some(fallback_model.clone()));
+        if let Some(fallback_model) = select_fallback_model(clients) {
+            return Err(Some(fallback_model));
         }
 
         Err(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client_with_fallback(fallback: Option<&str>) -> ClientConfig {
+        ClientConfig {
+            fallback: fallback.map(str::to_owned),
+            ..ClientConfig::default()
+        }
+    }
+
+    #[test]
+    fn selects_first_configured_fallback_in_client_order() {
+        let clients = vec![
+            client_with_fallback(None),
+            client_with_fallback(Some("backup-model-a")),
+            client_with_fallback(Some("backup-model-b")),
+        ];
+
+        assert_eq!(
+            select_fallback_model(&clients),
+            Some("backup-model-a".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_client_configures_fallback() {
+        let clients = vec![client_with_fallback(None), client_with_fallback(None)];
+
+        assert_eq!(select_fallback_model(&clients), None);
     }
 }
